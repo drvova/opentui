@@ -360,7 +360,15 @@ export class TextareaRenderable extends EditBufferRenderable {
       const start = this.editBuffer.offsetToPosition(selection.start)
       const end = this.editBuffer.offsetToPosition(selection.end)
       if (start && end) {
-        this.editBuffer.deleteRange(start.row, start.col, end.row, end.col)
+        let deleteEnd = end
+        if (start.row === end.row && start.col === 0) {
+          const lineText = this.editBuffer.getTextRangeByCoords(start.row, 0, start.row + 1, 0)
+          const selectedText = this.getSelectedText()
+          if (lineText === `${selectedText}\n`) {
+            deleteEnd = { row: start.row + 1, col: 0 }
+          }
+        }
+        this.editBuffer.deleteRange(start.row, start.col, deleteEnd.row, deleteEnd.col)
       } else {
         this.editorView.deleteSelectedText()
       }
@@ -435,6 +443,7 @@ export class TextareaRenderable extends EditBufferRenderable {
     this.updateSelectionForMovement(select, true)
     this.editorView.moveUpVisual()
     this.updateSelectionForMovement(select, false)
+    this.syncViewportToCursor()
     this.requestRender()
     return true
   }
@@ -444,6 +453,7 @@ export class TextareaRenderable extends EditBufferRenderable {
     this.updateSelectionForMovement(select, true)
     this.editorView.moveDownVisual()
     this.updateSelectionForMovement(select, false)
+    this.syncViewportToCursor()
     if (select && this.logicalCursor.col === 0) {
       const selection = this.getSelection()
       if (selection && selection.end === this.cursorOffset && selection.end > selection.start) {
@@ -466,6 +476,7 @@ export class TextareaRenderable extends EditBufferRenderable {
 
   public gotoLineHome(options?: { select?: boolean }): boolean {
     const select = options?.select ?? false
+    const previousOffset = this.cursorOffset
     this.updateSelectionForMovement(select, true)
     const cursor = this.editorView.getCursor()
     if (cursor.col === 0 && cursor.row > 0) {
@@ -477,6 +488,9 @@ export class TextareaRenderable extends EditBufferRenderable {
     }
 
     this.updateSelectionForMovement(select, false)
+    if (select && previousOffset > this.cursorOffset) {
+      this.editorView.setSelection(this.cursorOffset, previousOffset + 1, this.selectionBg, this.selectionFg)
+    }
     this.requestRender()
     return true
   }
@@ -524,9 +538,13 @@ export class TextareaRenderable extends EditBufferRenderable {
 
   public gotoBufferHome(options?: { select?: boolean }): boolean {
     const select = options?.select ?? false
+    const previousOffset = this.cursorOffset
     this.updateSelectionForMovement(select, true)
     this.editBuffer.setCursor(0, 0)
     this.updateSelectionForMovement(select, false)
+    if (select && previousOffset > this.cursorOffset) {
+      this.editorView.setSelection(this.cursorOffset, previousOffset + 1, this.selectionBg, this.selectionFg)
+    }
     this.requestRender()
     return true
   }

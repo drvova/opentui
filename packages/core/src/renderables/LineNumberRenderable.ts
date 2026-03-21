@@ -184,6 +184,7 @@ class GutterRenderable extends Renderable {
   public setLineColors(lineColorsGutter: Map<number, RGBA>, lineColorsContent: Map<number, RGBA>): void {
     this._lineColorsGutter = lineColorsGutter
     this._lineColorsContent = lineColorsContent
+    this.markDirty()
     this.requestRender()
   }
 
@@ -415,6 +416,9 @@ export class LineNumberRenderable extends Renderable {
     }
 
     this.target = target
+    this.target.flexGrow = 1
+    this.target.flexShrink = 1
+    this.target.width = "auto"
 
     // Listen for line info changes from target
     this.target.on("line-info-change", this.handleLineInfoChange)

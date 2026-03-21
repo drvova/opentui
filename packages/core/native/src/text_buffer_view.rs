@@ -444,6 +444,13 @@ impl TextBufferViewState {
     }
 
     fn selection_offset_for_coords(&self, x: i32, y: i32, text_end_offset: u32) -> Option<u32> {
+        if self.viewport_height > 0 {
+            let max_visible_y = i32::try_from(self.viewport_height).unwrap_or(i32::MAX) - 1;
+            if y > max_visible_y {
+                return Some(text_end_offset);
+            }
+        }
+
         let lines = self.compute_virtual_lines(false);
         if lines.is_empty() {
             return Some(0);

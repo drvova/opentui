@@ -813,9 +813,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     }
 
     const anchorOffset = this._keyboardSelectionAnchorOffset ?? this.cursorOffset
-    const focusOffset =
-      this.cursorOffset < anchorOffset ? Math.min(anchorOffset + 1, this.editBuffer.length) : this.cursorOffset
-    this.editorView.setSelection(anchorOffset, focusOffset, this._selectionBg, this._selectionFg)
+    this.editorView.setSelection(anchorOffset, this.cursorOffset, this._selectionBg, this._selectionFg)
     this.requestRender()
   }
 }
