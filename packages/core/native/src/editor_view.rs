@@ -1,4 +1,17 @@
-use crate::{edit_buffer::EditBufferState, text_buffer_view::TextBufferViewState};
+use crate::{
+    edit_buffer::{EditBufferState, LogicalCursor},
+    text_buffer_view::TextBufferViewState,
+};
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct VisualCursor {
+    pub visual_row: u32,
+    pub visual_col: u32,
+    pub logical_row: u32,
+    pub logical_col: u32,
+    pub offset: u32,
+}
 
 #[derive(Debug)]
 pub struct EditorViewState {
@@ -87,12 +100,38 @@ impl EditorViewState {
         self.text_buffer_view.set_selection(start, end);
     }
 
+    pub fn set_local_selection(
+        &mut self,
+        anchor_x: i32,
+        anchor_y: i32,
+        focus_x: i32,
+        focus_y: i32,
+    ) -> bool {
+        self.text_buffer_view
+            .set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    }
+
     pub fn update_selection(&mut self, end: u32) {
         self.text_buffer_view.update_selection(end);
     }
 
+    pub fn update_local_selection(
+        &mut self,
+        anchor_x: i32,
+        anchor_y: i32,
+        focus_x: i32,
+        focus_y: i32,
+    ) -> bool {
+        self.text_buffer_view
+            .update_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    }
+
     pub fn reset_selection(&mut self) {
         self.text_buffer_view.reset_selection();
+    }
+
+    pub fn reset_local_selection(&mut self) {
+        self.text_buffer_view.reset_local_selection();
     }
 
     pub fn selection_info(&self) -> u64 {
@@ -112,6 +151,108 @@ impl EditorViewState {
         (cursor.row, cursor.col)
     }
 
+    pub fn visual_cursor(&self) -> VisualCursor {
+        let cursor = self.edit_buffer().cursor();
+        let (visual_row, visual_col, logical_row, logical_col, offset) = self
+            .text_buffer_view
+            .visual_cursor_for_offset(cursor.offset, cursor.row, cursor.col);
+
+        VisualCursor {
+            visual_row,
+            visual_col,
+            logical_row,
+            logical_col,
+            offset,
+        }
+    }
+
+    pub fn move_up_visual(&mut self) {
+        let cursor = self.visual_cursor();
+        if cursor.visual_row == 0 {
+            return;
+        }
+        if let Some(offset) = self
+            .text_buffer_view
+            .offset_for_visual_position(cursor.visual_row - 1, cursor.visual_col)
+        {
+            self.edit_buffer_mut().set_cursor_by_offset(offset);
+        }
+    }
+
+    pub fn move_down_visual(&mut self) {
+        let cursor = self.visual_cursor();
+        let next_row = cursor.visual_row.saturating_add(1);
+        if let Some(offset) = self
+            .text_buffer_view
+            .offset_for_visual_position(next_row, cursor.visual_col)
+        {
+            self.edit_buffer_mut().set_cursor_by_offset(offset);
+        }
+    }
+
+    pub fn delete_selected_text(&mut self) {
+        if let Some((start, end)) = self.selection_range() {
+            self.edit_buffer_mut().delete_range_by_offsets(start, end);
+            self.reset_selection();
+        }
+    }
+
+    pub fn set_cursor_by_offset(&mut self, offset: u32) {
+        self.edit_buffer_mut().set_cursor_by_offset(offset);
+    }
+
+    pub fn next_word_boundary(&self) -> VisualCursor {
+        let logical = self.edit_buffer().next_word_boundary();
+        self.visual_cursor_from_logical(logical)
+    }
+
+    pub fn prev_word_boundary(&self) -> VisualCursor {
+        let logical = self.edit_buffer().prev_word_boundary();
+        self.visual_cursor_from_logical(logical)
+    }
+
+    pub fn eol(&self) -> VisualCursor {
+        let logical = self.edit_buffer().eol();
+        self.visual_cursor_from_logical(logical)
+    }
+
+    pub fn visual_sol(&self) -> VisualCursor {
+        let cursor = self.visual_cursor();
+        let offset = self
+            .text_buffer_view
+            .offset_for_visual_position(cursor.visual_row, 0)
+            .unwrap_or(cursor.offset);
+        let logical = self
+            .edit_buffer()
+            .offset_to_position(offset)
+            .unwrap_or(LogicalCursor {
+                row: cursor.logical_row,
+                col: 0,
+                offset,
+            });
+        self.visual_cursor_from_logical(logical)
+    }
+
+    pub fn visual_eol(&self) -> VisualCursor {
+        let lines = self.text_buffer_view.visual_lines();
+        let cursor = self.visual_cursor();
+        let line = lines
+            .get(usize::try_from(cursor.visual_row).unwrap_or(usize::MAX))
+            .copied();
+        let offset = line
+            .map(|line| line.start_offset.saturating_add(line.width_cols))
+            .unwrap_or(cursor.offset);
+        let logical = self
+            .edit_buffer()
+            .offset_to_position(offset)
+            .unwrap_or(LogicalCursor {
+                row: cursor.logical_row,
+                col: cursor.logical_col,
+                offset,
+            });
+        self.visual_cursor_from_logical(logical)
+    }
+
     fn edit_buffer(&self) -> &EditBufferState {
         assert!(
             !self.edit_buffer.is_null(),
@@ -119,11 +260,39 @@ impl EditorViewState {
         );
         unsafe { &*self.edit_buffer }
     }
+
+    fn edit_buffer_mut(&mut self) -> &mut EditBufferState {
+        assert!(
+            !self.edit_buffer.is_null(),
+            "EditorViewState requires a valid EditBufferState"
+        );
+        unsafe { &mut *self.edit_buffer }
+    }
+
+    fn selection_range(&self) -> Option<(u32, u32)> {
+        match self.selection_info() {
+            0xffff_ffff_ffff_ffff => None,
+            packed => Some(((packed >> 32) as u32, packed as u32)),
+        }
+    }
+
+    fn visual_cursor_from_logical(&self, logical: LogicalCursor) -> VisualCursor {
+        let (visual_row, visual_col, logical_row, logical_col, offset) = self
+            .text_buffer_view
+            .visual_cursor_for_offset(logical.offset, logical.row, logical.col);
+        VisualCursor {
+            visual_row,
+            visual_col,
+            logical_row,
+            logical_col,
+            offset,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::EditorViewState;
+    use super::{EditorViewState, VisualCursor};
     use crate::edit_buffer::EditBufferState;
 
     #[test]
@@ -157,5 +326,40 @@ mod tests {
         assert_eq!(view.selected_text_bytes(), b"Wo");
         view.reset_selection();
         assert!(view.selected_text_bytes().is_empty());
+    }
+
+    #[test]
+    fn visual_cursor_and_selection_actions_round_trip() {
+        let mut edit = EditBufferState::new(0);
+        edit.set_text_bytes(b"Hello World");
+
+        let mut view = EditorViewState::new(&mut edit, 5, 10);
+        view.set_wrap_mode(1);
+
+        let cursor = view.visual_cursor();
+        assert_eq!(
+            cursor,
+            VisualCursor {
+                visual_row: 0,
+                visual_col: 0,
+                logical_row: 0,
+                logical_col: 0,
+                offset: 0
+            }
+        );
+
+        view.set_local_selection(0, 0, 5, 1);
+        assert!(!view.selected_text_bytes().is_empty());
+        view.delete_selected_text();
+        assert_ne!(String::from_utf8_lossy(view.text_bytes()), "Hello World");
+
+        view.set_cursor_by_offset(0);
+        view.move_down_visual();
+        assert!(view.visual_cursor().visual_row <= view.total_virtual_line_count());
+        let _ = view.next_word_boundary();
+        let _ = view.prev_word_boundary();
+        let _ = view.eol();
+        let _ = view.visual_sol();
+        let _ = view.visual_eol();
     }
 }

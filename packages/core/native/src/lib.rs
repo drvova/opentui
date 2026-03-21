@@ -12,6 +12,7 @@ mod text_buffer_view;
 pub type NativeEditBuffer = edit_buffer::EditBufferState;
 pub type NativeEditorView = editor_view::EditorViewState;
 pub type NativeLogicalCursor = edit_buffer::LogicalCursor;
+pub type NativeVisualCursor = editor_view::VisualCursor;
 pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
 pub type NativeSpanFeedOptions = native_span_feed::Options;
 pub type NativeSpanFeedReserveInfo = native_span_feed::ReserveInfo;
@@ -20,6 +21,8 @@ pub type NativeSpanFeedStats = native_span_feed::Stats;
 pub type NativeSpanFeedStream = native_span_feed::Stream;
 pub type NativeStyledChunk = text_buffer::StyledChunk;
 pub type NativeTextBuffer = text_buffer::TextBufferState;
+pub type NativeLineInfo = text_buffer_view::LineInfoOut;
+pub type NativeMeasureResult = text_buffer_view::MeasureResultOut;
 pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
 
 use edit_buffer::EditBufferState;
@@ -608,6 +611,133 @@ pub extern "C" fn textBufferViewGetPlainText(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetLocalSelection(
+    view: *mut NativeTextBufferView,
+    anchor_x: i32,
+    anchor_y: i32,
+    focus_x: i32,
+    focus_y: i32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) -> bool {
+    if view.is_null() {
+        return false;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewUpdateLocalSelection(
+    view: *mut NativeTextBufferView,
+    anchor_x: i32,
+    anchor_y: i32,
+    focus_x: i32,
+    focus_y: i32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) -> bool {
+    if view.is_null() {
+        return false;
+    }
+
+    let view = unsafe { &mut *view };
+    view.update_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewResetLocalSelection(view: *mut NativeTextBufferView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.reset_local_selection();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetLineInfoDirect(
+    view: *mut NativeTextBufferView,
+    out_ptr: *mut NativeLineInfo,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    unsafe {
+        *out_ptr = view.line_info();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetLogicalLineInfoDirect(
+    view: *mut NativeTextBufferView,
+    out_ptr: *mut NativeLineInfo,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    unsafe {
+        *out_ptr = view.logical_line_info();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetTabIndicator(view: *mut NativeTextBufferView, indicator: u32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_tab_indicator(indicator);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetTabIndicatorColor(
+    view: *mut NativeTextBufferView,
+    color: *const f32,
+) {
+    if view.is_null() || color.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_tab_indicator_color(color_from_ptr(color));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetTruncate(view: *mut NativeTextBufferView, truncate: bool) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_truncate(truncate);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewMeasureForDimensions(
+    view: *mut NativeTextBufferView,
+    width: u32,
+    height: u32,
+    out_ptr: *mut NativeMeasureResult,
+) -> bool {
+    if view.is_null() || out_ptr.is_null() {
+        return false;
+    }
+
+    let view = unsafe { &mut *view };
+    unsafe {
+        *out_ptr = view.measure_for_dimensions(width, height);
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn createEditBuffer(width_method: u8) -> *mut NativeEditBuffer {
     Box::into_raw(Box::new(EditBufferState::new(width_method)))
 }
@@ -1193,6 +1323,186 @@ pub extern "C" fn editorViewGetText(
 
     let view = unsafe { &*view };
     copy_bytes_to_out(view.text_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetLocalSelection(
+    view: *mut NativeEditorView,
+    anchor_x: i32,
+    anchor_y: i32,
+    focus_x: i32,
+    focus_y: i32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+    _update_cursor: bool,
+    _follow_cursor: bool,
+) -> bool {
+    if view.is_null() {
+        return false;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewUpdateLocalSelection(
+    view: *mut NativeEditorView,
+    anchor_x: i32,
+    anchor_y: i32,
+    focus_x: i32,
+    focus_y: i32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+    _update_cursor: bool,
+    _follow_cursor: bool,
+) -> bool {
+    if view.is_null() {
+        return false;
+    }
+
+    let view = unsafe { &mut *view };
+    view.update_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewResetLocalSelection(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.reset_local_selection();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetVisualCursor(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.visual_cursor();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewMoveUpVisual(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.move_up_visual();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewMoveDownVisual(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.move_down_visual();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewDeleteSelectedText(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.delete_selected_text();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetCursorByOffset(view: *mut NativeEditorView, offset: u32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_cursor_by_offset(offset);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetNextWordBoundary(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.next_word_boundary();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetPrevWordBoundary(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.prev_word_boundary();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetEOL(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.eol();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetVisualSOL(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.visual_sol();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetVisualEOL(
+    view: *const NativeEditorView,
+    out_ptr: *mut NativeVisualCursor,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    unsafe {
+        *out_ptr = view.visual_eol();
+    }
 }
 
 #[unsafe(no_mangle)]

@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url"
 import { dlopen, ptr } from "bun:ffi"
 import { expect, test } from "bun:test"
 
+import { LineInfoStruct, MeasureResultStruct } from "../zig-structs.js"
+
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const packageRoot = join(__dirname, "..", "..")
@@ -33,11 +35,20 @@ runRustTextBufferViewSmoke("Rust TextBufferView cdylib supports selection and wr
     textBufferViewResetSelection: { args: ["ptr"], returns: "void" },
     textBufferViewGetSelectionInfo: { args: ["ptr"], returns: "u64" },
     textBufferViewUpdateSelection: { args: ["ptr", "u32", "ptr", "ptr"], returns: "void" },
+    textBufferViewSetLocalSelection: { args: ["ptr", "i32", "i32", "i32", "i32", "ptr", "ptr"], returns: "bool" },
+    textBufferViewUpdateLocalSelection: { args: ["ptr", "i32", "i32", "i32", "i32", "ptr", "ptr"], returns: "bool" },
+    textBufferViewResetLocalSelection: { args: ["ptr"], returns: "void" },
     textBufferViewSetWrapMode: { args: ["ptr", "u8"], returns: "void" },
     textBufferViewSetWrapWidth: { args: ["ptr", "u32"], returns: "void" },
     textBufferViewGetVirtualLineCount: { args: ["ptr"], returns: "u32" },
+    textBufferViewGetLineInfoDirect: { args: ["ptr", "ptr"], returns: "void" },
+    textBufferViewGetLogicalLineInfoDirect: { args: ["ptr", "ptr"], returns: "void" },
     textBufferViewGetSelectedText: { args: ["ptr", "ptr", "usize"], returns: "usize" },
     textBufferViewGetPlainText: { args: ["ptr", "ptr", "usize"], returns: "usize" },
+    textBufferViewSetTabIndicator: { args: ["ptr", "u32"], returns: "void" },
+    textBufferViewSetTabIndicatorColor: { args: ["ptr", "ptr"], returns: "void" },
+    textBufferViewSetTruncate: { args: ["ptr", "bool"], returns: "void" },
+    textBufferViewMeasureForDimensions: { args: ["ptr", "u32", "u32", "ptr"], returns: "bool" },
   }).symbols
 
   const textBuffer = lib.createTextBuffer(0)
@@ -70,9 +81,37 @@ runRustTextBufferViewSmoke("Rust TextBufferView cdylib supports selection and wr
   lib.textBufferViewSetWrapWidth(view, 5)
   expect(lib.textBufferViewGetVirtualLineCount(view)).toBe(3)
 
+  const lineInfoBuffer = new ArrayBuffer(LineInfoStruct.size)
+  lib.textBufferViewGetLineInfoDirect(view, ptr(lineInfoBuffer))
+  const lineInfo = LineInfoStruct.unpack(lineInfoBuffer)
+  expect((lineInfo.startCols as number[]).length).toBe(3)
+  expect((lineInfo.widthCols as number[])[0]).toBe(5)
+
+  const logicalInfoBuffer = new ArrayBuffer(LineInfoStruct.size)
+  lib.textBufferViewGetLogicalLineInfoDirect(view, ptr(logicalInfoBuffer))
+  const logicalInfo = LineInfoStruct.unpack(logicalInfoBuffer)
+  expect((logicalInfo.startCols as number[]).length).toBe(1)
+  expect((logicalInfo.widthCols as number[])[0]).toBe(11)
+
   lib.textBufferViewResetSelection(view)
   const resetPacked = lib.textBufferViewGetSelectionInfo(view)
   expect(typeof resetPacked === "bigint" ? resetPacked : BigInt(resetPacked)).toBe(0xffff_ffff_ffff_ffffn)
+
+  expect(lib.textBufferViewSetLocalSelection(view, 0, 0, 5, 1, null, null)).toBe(true)
+  const localSelected = new Uint8Array(16)
+  const localSelectedLen = Number(lib.textBufferViewGetSelectedText(view, localSelected, localSelected.length))
+  expect(localSelectedLen).toBeGreaterThan(0)
+  expect(lib.textBufferViewUpdateLocalSelection(view, 0, 0, 3, 0, null, null)).toBe(true)
+  lib.textBufferViewResetLocalSelection(view)
+
+  lib.textBufferViewSetTabIndicator(view, ".".codePointAt(0)!)
+  lib.textBufferViewSetTabIndicatorColor(view, new Float32Array([1, 0, 0, 1]))
+  lib.textBufferViewSetTruncate(view, true)
+  const measureBuffer = new ArrayBuffer(MeasureResultStruct.size)
+  expect(lib.textBufferViewMeasureForDimensions(view, 4, 10, ptr(measureBuffer))).toBe(true)
+  const measure = MeasureResultStruct.unpack(measureBuffer)
+  expect(measure.lineCount).toBe(3)
+  expect(measure.widthColsMax).toBe(4)
 
   lib.destroyTextBufferView(view)
   lib.destroyTextBuffer(textBuffer)

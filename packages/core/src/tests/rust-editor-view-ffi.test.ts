@@ -2,8 +2,10 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { dlopen } from "bun:ffi"
+import { dlopen, ptr } from "bun:ffi"
 import { expect, test } from "bun:test"
+
+import { VisualCursorStruct } from "../zig-structs.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -43,6 +45,25 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
     editorViewGetSelectedTextBytes: { args: ["ptr", "ptr", "usize"], returns: "usize" },
     editorViewGetCursor: { args: ["ptr", "ptr", "ptr"], returns: "void" },
     editorViewGetText: { args: ["ptr", "ptr", "usize"], returns: "usize" },
+    editorViewSetLocalSelection: {
+      args: ["ptr", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+      returns: "bool",
+    },
+    editorViewUpdateLocalSelection: {
+      args: ["ptr", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
+      returns: "bool",
+    },
+    editorViewResetLocalSelection: { args: ["ptr"], returns: "void" },
+    editorViewGetVisualCursor: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewMoveUpVisual: { args: ["ptr"], returns: "void" },
+    editorViewMoveDownVisual: { args: ["ptr"], returns: "void" },
+    editorViewDeleteSelectedText: { args: ["ptr"], returns: "void" },
+    editorViewSetCursorByOffset: { args: ["ptr", "u32"], returns: "void" },
+    editorViewGetNextWordBoundary: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewGetPrevWordBoundary: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewGetEOL: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewGetVisualSOL: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewGetVisualEOL: { args: ["ptr", "ptr"], returns: "void" },
   }).symbols
 
   const edit = lib.createEditBuffer(0)
@@ -73,6 +94,7 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
   lib.editorViewSetViewportSize(view, 5, 20)
   expect(lib.editorViewGetVirtualLineCount(view)).toBe(3)
   expect(lib.editorViewGetTotalVirtualLineCount(view)).toBe(3)
+  lib.editorViewSetViewport(view, 0, 0, 5, 20, true)
 
   lib.editorViewSetSelection(view, 6, 11, null, null)
   let packed = lib.editorViewGetSelection(view)
@@ -93,9 +115,44 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
   expect(row[0]).toBe(0)
   expect(col[0]).toBe(0)
 
+  const visualCursorBuffer = new ArrayBuffer(VisualCursorStruct.size)
+  lib.editorViewGetVisualCursor(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).visualRow).toBe(0)
+
+  expect(lib.editorViewSetLocalSelection(view, 0, 0, 5, 1, null, null, false, false)).toBe(true)
+  const localSelected = new Uint8Array(16)
+  const localSelectedLen = Number(lib.editorViewGetSelectedTextBytes(view, localSelected, localSelected.length))
+  expect(localSelectedLen).toBeGreaterThan(0)
+  expect(lib.editorViewUpdateLocalSelection(view, 0, 0, 2, 0, null, null, false, false)).toBe(true)
+  lib.editorViewResetLocalSelection(view)
+
+  lib.editorViewSetCursorByOffset(view, 6)
+  lib.editorViewGetVisualCursor(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).offset).toBe(6)
+
+  lib.editorViewGetNextWordBoundary(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).offset).toBeGreaterThanOrEqual(6)
+  lib.editorViewGetPrevWordBoundary(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).offset).toBeLessThanOrEqual(6)
+  lib.editorViewGetEOL(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).offset).toBeGreaterThanOrEqual(6)
+  lib.editorViewGetVisualSOL(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).visualCol).toBe(0)
+  lib.editorViewGetVisualEOL(view, ptr(visualCursorBuffer))
+  expect(VisualCursorStruct.unpack(visualCursorBuffer).offset).toBeGreaterThanOrEqual(6)
+
+  lib.editorViewMoveUpVisual(view)
+  lib.editorViewMoveDownVisual(view)
+
   const text = new Uint8Array(16)
   const textLen = Number(lib.editorViewGetText(view, text, text.length))
   expect(new TextDecoder().decode(text.slice(0, textLen))).toBe("Hello World")
+
+  lib.editorViewSetSelection(view, 6, 11, null, null)
+  lib.editorViewDeleteSelectedText(view)
+  const deletedText = new Uint8Array(16)
+  const deletedTextLen = Number(lib.editorViewGetText(view, deletedText, deletedText.length))
+  expect(new TextDecoder().decode(deletedText.slice(0, deletedTextLen))).toBe("Hello ")
 
   lib.editorViewResetSelection(view)
   packed = lib.editorViewGetSelection(view)

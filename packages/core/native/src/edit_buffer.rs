@@ -4,6 +4,7 @@ use crate::text_buffer::{
     TextBufferState, line_start_offset, next_offset, offset_to_position, position_to_offset,
     previous_offset, text_weight, text_width,
 };
+use unicode_width::UnicodeWidthChar;
 
 static NEXT_EDIT_BUFFER_ID: AtomicU16 = AtomicU16::new(1);
 
@@ -214,6 +215,10 @@ impl EditBufferState {
             end_col,
         )
         .unwrap_or(start);
+        self.delete_range_by_offsets(start, end);
+    }
+
+    pub fn delete_range_by_offsets(&mut self, start: u32, end: u32) {
         self.cursor_offset = self.text_buffer.delete_range_by_offsets(start, end);
     }
 
@@ -245,6 +250,59 @@ impl EditBufferState {
         .unwrap_or(0)
     }
 
+    pub fn current_offset(&self) -> u32 {
+        self.cursor_offset
+    }
+
+    pub fn next_word_boundary(&self) -> LogicalCursor {
+        let next = word_boundary(
+            self.text_buffer.text_str(),
+            self.cursor_offset,
+            self.text_buffer.tab_width(),
+            true,
+        );
+        self.offset_to_position(next).unwrap_or(LogicalCursor {
+            row: 0,
+            col: 0,
+            offset: next,
+        })
+    }
+
+    pub fn prev_word_boundary(&self) -> LogicalCursor {
+        let prev = word_boundary(
+            self.text_buffer.text_str(),
+            self.cursor_offset,
+            self.text_buffer.tab_width(),
+            false,
+        );
+        self.offset_to_position(prev).unwrap_or(LogicalCursor {
+            row: 0,
+            col: 0,
+            offset: prev,
+        })
+    }
+
+    pub fn eol(&self) -> LogicalCursor {
+        let cursor = self.cursor();
+        let lines: Vec<&str> = if self.text_buffer.text_str().is_empty() {
+            Vec::new()
+        } else {
+            self.text_buffer.text_str().split('\n').collect()
+        };
+        let row = usize::try_from(cursor.row).unwrap_or(usize::MAX);
+        if row >= lines.len() {
+            return cursor;
+        }
+
+        let col = text_width(lines[row], self.text_buffer.tab_width());
+        let offset = self.position_to_offset(cursor.row, col);
+        LogicalCursor {
+            row: cursor.row,
+            col,
+            offset,
+        }
+    }
+
     pub fn text_buffer_text_range(&self, start_offset: u32, end_offset: u32) -> String {
         self.text_buffer.text_range(start_offset, end_offset)
     }
@@ -258,6 +316,52 @@ impl EditBufferState {
     ) -> String {
         self.text_buffer
             .text_range_by_coords(start_row, start_col, end_row, end_col)
+    }
+}
+
+fn word_boundary(text: &str, offset: u32, tab_width: u8, forward: bool) -> u32 {
+    let chars: Vec<(u32, char)> = text
+        .char_indices()
+        .scan(0_u32, |weight, (byte_index, ch)| {
+            let current = *weight;
+            let char_weight = match ch {
+                '\r' => 0,
+                '\n' => 1,
+                '\t' => u32::from(tab_width.max(1)),
+                _ => ch.width().unwrap_or(0) as u32,
+            };
+            *weight = weight.saturating_add(char_weight);
+            Some((current, byte_index, ch))
+        })
+        .map(|(current, _byte, ch)| (current, ch))
+        .collect();
+
+    if forward {
+        let mut seen_non_space = false;
+        for (char_offset, ch) in chars {
+            if char_offset < offset {
+                continue;
+            }
+            if ch.is_whitespace() {
+                if seen_non_space {
+                    return char_offset;
+                }
+            } else {
+                seen_non_space = true;
+            }
+        }
+        text_weight(text, tab_width)
+    } else {
+        let mut previous = 0_u32;
+        for (char_offset, ch) in chars {
+            if char_offset >= offset {
+                break;
+            }
+            if ch.is_whitespace() {
+                previous = char_offset.saturating_add(1);
+            }
+        }
+        previous
     }
 }
 
@@ -324,5 +428,18 @@ mod tests {
         assert_eq!(buffer.cursor().col, 2);
         buffer.move_cursor_up();
         assert_eq!(buffer.cursor().row, 1);
+    }
+
+    #[test]
+    fn range_delete_and_boundaries_round_trip() {
+        let mut buffer = EditBufferState::new(0);
+        buffer.set_text_bytes(b"hello world\nnext");
+        buffer.set_cursor_to_line_col(0, 6);
+        assert_eq!(buffer.next_word_boundary().offset, 11);
+        assert_eq!(buffer.prev_word_boundary().offset, 6);
+        assert_eq!(buffer.eol().col, 11);
+
+        buffer.delete_range_by_offsets(0, 6);
+        assert_eq!(String::from_utf8_lossy(buffer.text_bytes()), "world\nnext");
     }
 }
