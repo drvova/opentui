@@ -1345,15 +1345,13 @@ impl OptimizedBuffer {
     }
 
     fn current_scissor_rect(&self) -> Option<ClipRect> {
-        self.scissor_stack
-            .last()
-            .copied()
-            .filter(|rect| rect.width > 0 && rect.height > 0)
+        self.scissor_stack.last().copied()
     }
 
     fn is_point_in_scissor(&self, x: i32, y: i32) -> bool {
         match self.current_scissor_rect() {
             None => true,
+            Some(rect) if rect.width == 0 || rect.height == 0 => false,
             Some(rect) => {
                 x >= rect.x
                     && x < rect.x + rect.width as i32

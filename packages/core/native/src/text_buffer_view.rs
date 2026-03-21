@@ -718,6 +718,7 @@ impl TextBufferViewState {
                             && has_more_tokens
                             && last_break_col.is_some()
                             && last_break_kind == Some(BreakKind::Whitespace)
+                            && !token.chars().last().is_some_and(|ch| ch.is_whitespace())
                         {
                             let end_col = last_break_col.unwrap_or(current_col);
                             virtual_lines.push(VirtualLine {

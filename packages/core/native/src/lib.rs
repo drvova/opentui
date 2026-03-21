@@ -3165,7 +3165,7 @@ pub extern "C" fn bufferDrawTextBufferView(
     x: i32,
     y: i32,
 ) {
-    if buffer.is_null() || view.is_null() || x < 0 || y < 0 {
+    if buffer.is_null() || view.is_null() || x < 0 {
         return;
     }
 
@@ -3176,7 +3176,11 @@ pub extern "C" fn bufferDrawTextBufferView(
     let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
 
     for line in view.visible_lines() {
-        let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
+        let row = y + i32::try_from(line.viewport_row).unwrap_or(i32::MAX);
+        if row < 0 || row >= i32::try_from(buffer.height()).unwrap_or(i32::MAX) {
+            continue;
+        }
+        let row = row as usize;
         if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
             let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
             let selected = view.rendered_text_for_offsets(sel_start, sel_end);
@@ -3229,7 +3233,7 @@ pub extern "C" fn bufferDrawEditorView(
     x: i32,
     y: i32,
 ) {
-    if buffer.is_null() || view.is_null() || x < 0 || y < 0 {
+    if buffer.is_null() || view.is_null() || x < 0 {
         return;
     }
 
@@ -3241,7 +3245,11 @@ pub extern "C" fn bufferDrawEditorView(
 
     if let Some(placeholder) = view.placeholder_text() {
         for (row_index, line) in placeholder.split('\n').enumerate() {
-            let row = usize::try_from(y).unwrap_or(0) + row_index;
+            let row = y + i32::try_from(row_index).unwrap_or(i32::MAX);
+            if row < 0 || row >= i32::try_from(buffer.height()).unwrap_or(i32::MAX) {
+                continue;
+            }
+            let row = row as usize;
             let _ = buffer.draw_text(
                 usize::try_from(x).unwrap_or(0),
                 row,
@@ -3255,7 +3263,11 @@ pub extern "C" fn bufferDrawEditorView(
     }
 
     for line in view.visible_lines() {
-        let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
+        let row = y + i32::try_from(line.viewport_row).unwrap_or(i32::MAX);
+        if row < 0 || row >= i32::try_from(buffer.height()).unwrap_or(i32::MAX) {
+            continue;
+        }
+        let row = row as usize;
         if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
             let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
             let selected = view.rendered_text_for_offsets(sel_start, sel_end);
