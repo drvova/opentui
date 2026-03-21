@@ -8,4 +8,6 @@ test("native ABI manifest stays aligned with Zig exports and Bun loader symbols"
 
   expect(current).toEqual(recorded)
   expect(current.missingFromNativeExports).toHaveLength(0)
+  expect(current.groups.text.missingFromNativeExports).toHaveLength(0)
+  expect(current.groups.nativeSpanFeed.missingFromNativeExports).toHaveLength(0)
 })

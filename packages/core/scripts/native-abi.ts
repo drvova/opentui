@@ -3,6 +3,14 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import process from "node:process"
+import { nativeSpanFeedSymbols, textRuntimeSymbols } from "../src/native-symbols.js"
+
+interface AbiManifestGroup {
+  symbolCount: number
+  symbolHash: string
+  bunLoaderSymbols: string[]
+  missingFromNativeExports: string[]
+}
 
 export interface AbiManifest {
   schemaVersion: 1
@@ -12,6 +20,11 @@ export interface AbiManifest {
   bunLoaderSymbols: string[]
   missingFromNativeExports: string[]
   unloadedNativeExports: string[]
+  groups: {
+    core: AbiManifestGroup
+    text: AbiManifestGroup
+    nativeSpanFeed: AbiManifestGroup
+  }
 }
 
 const __filename = fileURLToPath(import.meta.url)
@@ -20,6 +33,8 @@ const rootDir = resolve(__dirname, "..")
 const zigSourceDir = join(rootDir, "src", "zig")
 const zigTsPath = join(rootDir, "src", "zig.ts")
 export const abiManifestPath = join(rootDir, "native", "ffi-manifest.json")
+const textRuntimeSymbolNames = sortUnique(Object.keys(textRuntimeSymbols))
+const nativeSpanFeedSymbolNames = sortUnique(Object.keys(nativeSpanFeedSymbols))
 
 function sortUnique(values: Iterable<string>): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right))
@@ -85,15 +100,25 @@ export function extractNativeExports(source: string): string[] {
   return sortUnique([...exports].map((match) => match[1]))
 }
 
-export function extractBunLoaderSymbols(source: string): string[] {
+export function extractInlineLoaderSymbols(source: string): string[] {
   const block = extractBlock(source, "const rawSymbols = dlopen(resolvedLibPath, {")
   const symbols = block.matchAll(/^\s{4}([A-Za-z0-9_]+): \{$/gm)
   return sortUnique([...symbols].map((match) => match[1]))
 }
 
+function createGroupManifest(bunLoaderSymbols: string[], nativeExports: string[]): AbiManifestGroup {
+  return {
+    symbolCount: bunLoaderSymbols.length,
+    symbolHash: createHash("sha256").update(JSON.stringify(bunLoaderSymbols)).digest("hex"),
+    bunLoaderSymbols,
+    missingFromNativeExports: bunLoaderSymbols.filter((symbol) => !nativeExports.includes(symbol)),
+  }
+}
+
 export function createAbiManifest(): AbiManifest {
   const nativeExports = sortUnique(listZigFiles(zigSourceDir).flatMap((file) => extractNativeExports(readUtf8(file))))
-  const bunLoaderSymbols = extractBunLoaderSymbols(readUtf8(zigTsPath))
+  const coreBunLoaderSymbols = extractInlineLoaderSymbols(readUtf8(zigTsPath))
+  const bunLoaderSymbols = sortUnique([...coreBunLoaderSymbols, ...textRuntimeSymbolNames, ...nativeSpanFeedSymbolNames])
 
   const missingFromNativeExports = bunLoaderSymbols.filter((symbol) => !nativeExports.includes(symbol))
   const unloadedNativeExports = nativeExports.filter((symbol) => !bunLoaderSymbols.includes(symbol))
@@ -107,6 +132,11 @@ export function createAbiManifest(): AbiManifest {
     bunLoaderSymbols,
     missingFromNativeExports,
     unloadedNativeExports,
+    groups: {
+      core: createGroupManifest(coreBunLoaderSymbols, nativeExports),
+      text: createGroupManifest(textRuntimeSymbolNames, nativeExports),
+      nativeSpanFeed: createGroupManifest(nativeSpanFeedSymbolNames, nativeExports),
+    },
   }
 }
 
