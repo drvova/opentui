@@ -82,8 +82,6 @@ export const extensionToFiletype: Map<string, string> = new Map([
   ["xsl", "xsl"],
   ["yaml", "yaml"],
   ["yml", "yaml"],
-  ["zig", "zig"],
-  ["zon", "zig"],
   ["zsh", "bash"],
   ["c++", "cpp"],
   ["erl", "erlang"],

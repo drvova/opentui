@@ -15,8 +15,6 @@ import markdown_language from "./assets/markdown/tree-sitter-markdown.wasm" with
 import markdown_injections from "./assets/markdown/injections.scm" with { type: "file" }
 import markdown_inline_highlights from "./assets/markdown_inline/highlights.scm" with { type: "file" }
 import markdown_inline_language from "./assets/markdown_inline/tree-sitter-markdown_inline.wasm" with { type: "file" }
-import zig_highlights from "./assets/zig/highlights.scm" with { type: "file" }
-import zig_language from "./assets/zig/tree-sitter-zig.wasm" with { type: "file" }
 
 // Cached parsers to avoid re-resolving paths on every call
 let _cachedParsers: FiletypeParserOptions[] | undefined
@@ -72,13 +70,6 @@ export function getParsers(): FiletypeParserOptions[] {
           highlights: [resolve(dirname(fileURLToPath(import.meta.url)), markdown_inline_highlights)],
         },
         wasm: resolve(dirname(fileURLToPath(import.meta.url)), markdown_inline_language),
-      },
-      {
-        filetype: "zig",
-        queries: {
-          highlights: [resolve(dirname(fileURLToPath(import.meta.url)), zig_highlights)],
-        },
-        wasm: resolve(dirname(fileURLToPath(import.meta.url)), zig_language),
       },
     ]
   }

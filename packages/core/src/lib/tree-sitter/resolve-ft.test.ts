@@ -16,7 +16,6 @@ test("pathToFiletype resolves common extension aliases to parser ids", () => {
   expect(pathToFiletype("src/main.hs")).toBe("haskell")
   expect(pathToFiletype("src/main.ml")).toBe("ocaml")
   expect(pathToFiletype("src/main.scala")).toBe("scala")
-  expect(pathToFiletype("src/config.zon")).toBe("zig")
   expect(pathToFiletype("src/script.sh")).toBe("bash")
 })
 

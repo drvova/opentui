@@ -68,14 +68,5 @@ export default {
         ],
       },
     },
-    {
-      filetype: "zig",
-      wasm: "https://github.com/tree-sitter-grammars/tree-sitter-zig/releases/download/v1.1.2/tree-sitter-zig.wasm",
-      queries: {
-        highlights: [
-          "https://github.com/nvim-treesitter/nvim-treesitter/raw/refs/heads/master/queries/zig/highlights.scm",
-        ],
-      },
-    },
   ],
 }

@@ -1275,7 +1275,7 @@ test("parseKeypress - filters out SGR mouse events", () => {
 })
 
 test("parseKeypress - filters out incomplete/partial SGR mouse sequences", () => {
-  // These are flushed by the zig parser when a new ESC arrives mid-sequence
+  // These are flushed by the native parser when a new ESC arrives mid-sequence
   expect(parseKeypress("\x1b[<35;")).toBeNull()
   expect(parseKeypress("\x1b[<35;20")).toBeNull()
   expect(parseKeypress("\x1b[<35;20;")).toBeNull()
