@@ -222,6 +222,44 @@ impl TextBufferState {
     pub fn width_method(&self) -> u8 {
         self.width_method
     }
+
+    pub(crate) fn set_text_bytes(&mut self, data: &[u8]) {
+        self.text = normalize_text_bytes(data);
+    }
+
+    pub(crate) fn text_str(&self) -> &str {
+        &self.text
+    }
+
+    pub(crate) fn insert_text_at_offset(&mut self, offset: u32, data: &[u8]) -> u32 {
+        let insert = normalize_text_bytes(data);
+        if insert.is_empty() {
+            return offset;
+        }
+
+        let byte_index = weight_to_byte_index(&self.text, self.tab_width, offset);
+        self.text.insert_str(byte_index, &insert);
+        offset.saturating_add(text_weight(&insert, self.tab_width))
+    }
+
+    pub(crate) fn delete_range_by_offsets(&mut self, start_offset: u32, end_offset: u32) -> u32 {
+        if start_offset == end_offset {
+            return start_offset;
+        }
+
+        let start = start_offset.min(end_offset);
+        let end = start_offset.max(end_offset);
+        let start_byte = weight_to_byte_index(&self.text, self.tab_width, start);
+        let end_byte = weight_to_byte_index(&self.text, self.tab_width, end);
+
+        if start_byte >= end_byte || start_byte >= self.text.len() {
+            return start;
+        }
+
+        self.text
+            .replace_range(start_byte..end_byte.min(self.text.len()), "");
+        start
+    }
 }
 
 fn normalize_text_bytes(data: &[u8]) -> String {
@@ -251,6 +289,160 @@ pub(crate) fn text_width(text: &str, tab_width: u8) -> u32 {
         }
     }
     width
+}
+
+pub(crate) fn text_weight(text: &str, tab_width: u8) -> u32 {
+    let mut weight = 0_u32;
+    for ch in text.chars() {
+        weight = weight.saturating_add(char_weight(ch, tab_width));
+    }
+    weight
+}
+
+pub(crate) fn weight_to_byte_index(text: &str, tab_width: u8, target: u32) -> usize {
+    let mut weight = 0_u32;
+    for (index, ch) in text.char_indices() {
+        if weight == target {
+            return index;
+        }
+        weight = weight.saturating_add(char_weight(ch, tab_width));
+    }
+    text.len()
+}
+
+pub(crate) fn previous_offset(text: &str, tab_width: u8, target: u32) -> u32 {
+    let mut weight = 0_u32;
+    let mut previous = 0_u32;
+    for ch in text.chars() {
+        if weight >= target {
+            return previous;
+        }
+        previous = weight;
+        weight = weight.saturating_add(char_weight(ch, tab_width));
+    }
+    previous
+}
+
+pub(crate) fn next_offset(text: &str, tab_width: u8, target: u32) -> u32 {
+    let total = text_weight(text, tab_width);
+    if target >= total {
+        return total;
+    }
+
+    let mut weight = 0_u32;
+    for ch in text.chars() {
+        let next = weight.saturating_add(char_weight(ch, tab_width));
+        if weight == target {
+            return next;
+        }
+        if target < next {
+            return next;
+        }
+        weight = next;
+    }
+    total
+}
+
+pub(crate) fn offset_to_position(text: &str, tab_width: u8, target: u32) -> Option<(u32, u32)> {
+    let total = text_weight(text, tab_width);
+    if target > total {
+        return None;
+    }
+
+    let mut row = 0_u32;
+    let mut col = 0_u32;
+    let mut offset = 0_u32;
+
+    for ch in text.chars() {
+        if offset == target {
+            return Some((row, col));
+        }
+
+        match ch {
+            '\r' => {}
+            '\n' => {
+                offset = offset.saturating_add(1);
+                row = row.saturating_add(1);
+                col = 0;
+            }
+            '\t' => {
+                let width = u32::from(tab_width.max(1));
+                offset = offset.saturating_add(width);
+                col = col.saturating_add(width);
+            }
+            _ => {
+                let width = ch.width().unwrap_or(0) as u32;
+                offset = offset.saturating_add(width);
+                col = col.saturating_add(width);
+            }
+        }
+    }
+
+    (offset == target).then_some((row, col))
+}
+
+pub(crate) fn position_to_offset(text: &str, tab_width: u8, row: u32, col: u32) -> Option<u32> {
+    let mut current_row = 0_u32;
+    let mut current_col = 0_u32;
+    let mut offset = 0_u32;
+
+    if row == 0 && col == 0 {
+        return Some(0);
+    }
+
+    for ch in text.chars() {
+        if current_row == row && current_col == col {
+            return Some(offset);
+        }
+
+        match ch {
+            '\r' => {}
+            '\n' => {
+                offset = offset.saturating_add(1);
+                current_row = current_row.saturating_add(1);
+                current_col = 0;
+            }
+            '\t' => {
+                let width = u32::from(tab_width.max(1));
+                offset = offset.saturating_add(width);
+                current_col = current_col.saturating_add(width);
+            }
+            _ => {
+                let width = ch.width().unwrap_or(0) as u32;
+                offset = offset.saturating_add(width);
+                current_col = current_col.saturating_add(width);
+            }
+        }
+    }
+
+    (current_row == row && current_col == col).then_some(offset)
+}
+
+pub(crate) fn line_start_offset(text: &str, tab_width: u8, row: u32) -> Option<u32> {
+    if row == 0 {
+        return Some(0);
+    }
+
+    let mut current_row = 0_u32;
+    let mut offset = 0_u32;
+
+    for ch in text.chars() {
+        match ch {
+            '\r' => {}
+            '\n' => {
+                offset = offset.saturating_add(1);
+                current_row = current_row.saturating_add(1);
+                if current_row == row {
+                    return Some(offset);
+                }
+            }
+            _ => {
+                offset = offset.saturating_add(char_weight(ch, tab_width));
+            }
+        }
+    }
+
+    None
 }
 
 fn slice_by_display_offsets(
@@ -334,6 +526,15 @@ fn slice_by_weight_offsets(
     text[start_byte..end_byte].to_string()
 }
 
+fn char_weight(ch: char, tab_width: u8) -> u32 {
+    match ch {
+        '\r' => 0,
+        '\n' => 1,
+        '\t' => u32::from(tab_width.max(1)),
+        _ => ch.width().unwrap_or(0) as u32,
+    }
+}
+
 pub fn copy_bytes_to_out(source: &[u8], out_ptr: *mut u8, max_len: usize) -> usize {
     if out_ptr.is_null() || max_len == 0 {
         return 0;
@@ -347,7 +548,10 @@ pub fn copy_bytes_to_out(source: &[u8], out_ptr: *mut u8, max_len: usize) -> usi
 
 #[cfg(test)]
 mod tests {
-    use super::{TextBufferState, copy_bytes_to_out, text_width};
+    use super::{
+        TextBufferState, copy_bytes_to_out, line_start_offset, next_offset, offset_to_position,
+        position_to_offset, previous_offset, text_width,
+    };
 
     #[test]
     fn width_counts_unicode_cells_and_ignores_newlines() {
@@ -385,5 +589,16 @@ mod tests {
         let written = copy_bytes_to_out(b"abcdef", out.as_mut_ptr(), out.len());
         assert_eq!(written, 4);
         assert_eq!(&out, b"abcd");
+    }
+
+    #[test]
+    fn offset_and_position_helpers_round_trip() {
+        let text = "Hello\n世界";
+        assert_eq!(offset_to_position(text, 4, 0), Some((0, 0)));
+        assert_eq!(offset_to_position(text, 4, 6), Some((1, 0)));
+        assert_eq!(position_to_offset(text, 4, 1, 0), Some(6));
+        assert_eq!(line_start_offset(text, 4, 1), Some(6));
+        assert_eq!(previous_offset(text, 4, 6), 5);
+        assert_eq!(next_offset(text, 4, 6), 8);
     }
 }

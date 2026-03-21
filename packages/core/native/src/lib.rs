@@ -2,11 +2,14 @@
 
 use core::ffi::{c_char, c_uint};
 
+mod edit_buffer;
 mod native_span_feed;
 mod syntax_style;
 mod text_buffer;
 mod text_buffer_view;
 
+pub type NativeEditBuffer = edit_buffer::EditBufferState;
+pub type NativeLogicalCursor = edit_buffer::LogicalCursor;
 pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
 pub type NativeSpanFeedOptions = native_span_feed::Options;
 pub type NativeSpanFeedReserveInfo = native_span_feed::ReserveInfo;
@@ -17,6 +20,7 @@ pub type NativeStyledChunk = text_buffer::StyledChunk;
 pub type NativeTextBuffer = text_buffer::TextBufferState;
 pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
 
+use edit_buffer::EditBufferState;
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use syntax_style::{Rgba, SyntaxStyleState};
 use text_buffer::{TextBufferState, copy_bytes_to_out};
@@ -598,6 +602,362 @@ pub extern "C" fn textBufferViewGetPlainText(
 
     let view = unsafe { &*view };
     copy_bytes_to_out(view.plain_text_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createEditBuffer(width_method: u8) -> *mut NativeEditBuffer {
+    Box::into_raw(Box::new(EditBufferState::new(width_method)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyEditBuffer(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(buffer));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferSetText(
+    buffer: *mut NativeEditBuffer,
+    text_ptr: *const u8,
+    text_len: usize,
+) {
+    if buffer.is_null() || text_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let data = unsafe { std::slice::from_raw_parts(text_ptr, text_len) };
+    buffer.set_text_bytes(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferSetTextFromMem(buffer: *mut NativeEditBuffer, mem_id: u8) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.set_text_from_mem(mem_id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferReplaceText(
+    buffer: *mut NativeEditBuffer,
+    text_ptr: *const u8,
+    text_len: usize,
+) {
+    if buffer.is_null() || text_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let data = unsafe { std::slice::from_raw_parts(text_ptr, text_len) };
+    buffer.replace_text_bytes(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferReplaceTextFromMem(buffer: *mut NativeEditBuffer, mem_id: u8) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.replace_text_from_mem(mem_id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetText(
+    buffer: *const NativeEditBuffer,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    copy_bytes_to_out(buffer.text_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferInsertChar(
+    buffer: *mut NativeEditBuffer,
+    char_ptr: *const u8,
+    char_len: usize,
+) {
+    if buffer.is_null() || char_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let data = unsafe { std::slice::from_raw_parts(char_ptr, char_len) };
+    buffer.insert_char(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferInsertText(
+    buffer: *mut NativeEditBuffer,
+    text_ptr: *const u8,
+    text_len: usize,
+) {
+    if buffer.is_null() || text_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let data = unsafe { std::slice::from_raw_parts(text_ptr, text_len) };
+    buffer.insert_text(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferDeleteChar(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.delete_char();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferDeleteCharBackward(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.delete_char_backward();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferDeleteRange(
+    buffer: *mut NativeEditBuffer,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.delete_range_by_coords(start_row, start_col, end_row, end_col);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferNewLine(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.new_line();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferMoveCursorLeft(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.move_cursor_left();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferMoveCursorRight(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.move_cursor_right();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferMoveCursorUp(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.move_cursor_up();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferMoveCursorDown(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.move_cursor_down();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGotoLine(buffer: *mut NativeEditBuffer, line: u32) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.goto_line(line);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferSetCursor(buffer: *mut NativeEditBuffer, line: u32, col: u32) {
+    editBufferSetCursorToLineCol(buffer, line, col);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferSetCursorToLineCol(buffer: *mut NativeEditBuffer, line: u32, col: u32) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.set_cursor_to_line_col(line, col);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferSetCursorByOffset(buffer: *mut NativeEditBuffer, offset: u32) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.set_cursor_by_offset(offset);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetCursorPosition(
+    buffer: *const NativeEditBuffer,
+    out_ptr: *mut NativeLogicalCursor,
+) {
+    if buffer.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &*buffer };
+    unsafe {
+        *out_ptr = buffer.cursor();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetId(buffer: *const NativeEditBuffer) -> u16 {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.id()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetTextBuffer(buffer: *mut NativeEditBuffer) -> *mut NativeTextBuffer {
+    if buffer.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.text_buffer_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferClear(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.clear();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferOffsetToPosition(
+    buffer: *const NativeEditBuffer,
+    offset: u32,
+    out_ptr: *mut NativeLogicalCursor,
+) -> bool {
+    if buffer.is_null() || out_ptr.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &*buffer };
+    let Some(cursor) = buffer.offset_to_position(offset) else {
+        return false;
+    };
+    unsafe {
+        *out_ptr = cursor;
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferPositionToOffset(
+    buffer: *const NativeEditBuffer,
+    row: u32,
+    col: u32,
+) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.position_to_offset(row, col)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetLineStartOffset(buffer: *const NativeEditBuffer, row: u32) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.line_start_offset(row)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetTextRange(
+    buffer: *const NativeEditBuffer,
+    start_offset: u32,
+    end_offset: u32,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    let text = buffer.text_buffer_text_range(start_offset, end_offset);
+    copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetTextRangeByCoords(
+    buffer: *const NativeEditBuffer,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    let text = buffer.text_buffer_text_range_by_coords(start_row, start_col, end_row, end_col);
+    copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
 }
 
 #[unsafe(no_mangle)]
