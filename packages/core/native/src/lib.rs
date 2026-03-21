@@ -6,7 +6,9 @@ mod edit_buffer;
 mod editor_view;
 mod native_span_feed;
 mod optimized_buffer;
+mod renderer_state;
 mod syntax_style;
+mod terminal_state;
 mod text_buffer;
 mod text_buffer_view;
 
@@ -27,12 +29,18 @@ pub type NativeTextBuffer = text_buffer::TextBufferState;
 pub type NativeLineInfo = text_buffer_view::LineInfoOut;
 pub type NativeMeasureResult = text_buffer_view::MeasureResultOut;
 pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
+pub type NativeTerminalCapabilities = terminal_state::TerminalCapabilitiesOut;
+pub type NativeCursorState = terminal_state::CursorState;
+pub type NativeCursorStyleOptions = terminal_state::CursorStyleOptions;
+pub type NativeRenderer = renderer_state::RendererState;
 
 use edit_buffer::EditBufferState;
 use editor_view::EditorViewState;
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use optimized_buffer::OptimizedBuffer;
+use renderer_state::RendererState;
 use syntax_style::{Rgba, SyntaxStyleState};
+use terminal_state::CursorStyleOptions as TerminalCursorStyleOptions;
 use text_buffer::{TextBufferState, copy_bytes_to_out};
 use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
 
@@ -75,6 +83,483 @@ fn color_from_ptr(ptr: *const f32) -> Rgba {
     let color = unsafe { std::slice::from_raw_parts(ptr, 4) };
     [color[0], color[1], color[2], color[3]]
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createRenderer(
+    width: u32,
+    height: u32,
+    _testing: bool,
+    _remote: bool,
+) -> *mut NativeRenderer {
+    if width == 0 || height == 0 {
+        return core::ptr::null_mut();
+    }
+
+    Box::into_raw(Box::new(RendererState::new(width, height)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyRenderer(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(renderer));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setTerminalEnvVar(
+    renderer: *mut NativeRenderer,
+    key_ptr: *const u8,
+    key_len: usize,
+    value_ptr: *const u8,
+    value_len: usize,
+) -> bool {
+    if renderer.is_null() || key_ptr.is_null() || value_ptr.is_null() {
+        return false;
+    }
+
+    let renderer = unsafe { &mut *renderer };
+    let key = unsafe { std::slice::from_raw_parts(key_ptr, key_len) };
+    let value = unsafe { std::slice::from_raw_parts(value_ptr, value_len) };
+    renderer.terminal.set_terminal_env_var(key, value)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setUseThread(renderer: *mut NativeRenderer, use_thread: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.use_thread = use_thread;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setBackgroundColor(renderer: *mut NativeRenderer, color: *const f32) {
+    if renderer.is_null() || color.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.background_color = color_from_ptr(color);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setRenderOffset(renderer: *mut NativeRenderer, offset: u32) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.render_offset = offset;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn updateStats(
+    renderer: *mut NativeRenderer,
+    time: f64,
+    fps: u32,
+    frame_callback_time: f64,
+) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.render_stats.time = time;
+    renderer.render_stats.fps = fps;
+    renderer.render_stats.frame_callback_time = frame_callback_time;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn updateMemoryStats(
+    renderer: *mut NativeRenderer,
+    heap_used: u32,
+    heap_total: u32,
+    array_buffers: u32,
+) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.memory_stats.heap_used = heap_used;
+    renderer.memory_stats.heap_total = heap_total;
+    renderer.memory_stats.array_buffers = array_buffers;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn render(renderer: *mut NativeRenderer, _force: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.render();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getNextBuffer(renderer: *mut NativeRenderer) -> *mut NativeOptimizedBuffer {
+    if renderer.is_null() {
+        return core::ptr::null_mut();
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.next_buffer_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getCurrentBuffer(renderer: *mut NativeRenderer) -> *mut NativeOptimizedBuffer {
+    if renderer.is_null() {
+        return core::ptr::null_mut();
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.current_buffer_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn resizeRenderer(renderer: *mut NativeRenderer, width: u32, height: u32) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.resize(width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setCursorPosition(renderer: *mut NativeRenderer, x: i32, y: i32, visible: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.set_cursor_position(x, y, visible);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setCursorColor(renderer: *mut NativeRenderer, color: *const f32) {
+    if renderer.is_null() || color.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.set_cursor_color(color_from_ptr(color));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getCursorState(renderer: *const NativeRenderer, out_ptr: *mut NativeCursorState) {
+    if renderer.is_null() || out_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &*renderer };
+    unsafe {
+        *out_ptr = renderer.terminal.cursor_state();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setCursorStyleOptions(
+    renderer: *mut NativeRenderer,
+    options_ptr: *const NativeCursorStyleOptions,
+) {
+    if renderer.is_null() || options_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    let options = unsafe { *options_ptr };
+    renderer
+        .terminal
+        .set_cursor_style_options(TerminalCursorStyleOptions {
+            style: options.style,
+            blinking: options.blinking,
+            color: options.color,
+            cursor: options.cursor,
+        });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn clearTerminal(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.clear_terminal();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setTerminalTitle(
+    renderer: *mut NativeRenderer,
+    title_ptr: *const u8,
+    title_len: usize,
+) {
+    if renderer.is_null() || title_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    let title = unsafe { std::slice::from_raw_parts(title_ptr, title_len) };
+    renderer.terminal.set_terminal_title(title);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn copyToClipboardOSC52(
+    renderer: *mut NativeRenderer,
+    target: u8,
+    payload_ptr: *const u8,
+    payload_len: usize,
+) -> bool {
+    if renderer.is_null() || payload_ptr.is_null() {
+        return false;
+    }
+    let renderer = unsafe { &mut *renderer };
+    let payload = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+    renderer.terminal.copy_to_clipboard_osc52(target, payload)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn clearClipboardOSC52(renderer: *mut NativeRenderer, target: u8) -> bool {
+    if renderer.is_null() {
+        return false;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.clear_clipboard_osc52(target)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn addToHitGrid(
+    renderer: *mut NativeRenderer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    id: u32,
+) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.add_to_hit_grid(x, y, width, height, id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn addToCurrentHitGridClipped(
+    renderer: *mut NativeRenderer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    id: u32,
+) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.add_to_current_hit_grid_clipped(x, y, width, height, id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn checkHit(renderer: *const NativeRenderer, x: u32, y: u32) -> u32 {
+    if renderer.is_null() {
+        return 0;
+    }
+    let renderer = unsafe { &*renderer };
+    renderer.check_hit(x, y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn clearCurrentHitGrid(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.clear_current_hit_grid();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getHitGridDirty(renderer: *const NativeRenderer) -> bool {
+    if renderer.is_null() {
+        return false;
+    }
+    let renderer = unsafe { &*renderer };
+    renderer.hit_grid_dirty()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn dumpBuffers(_renderer: *mut NativeRenderer, _timestamp: u64) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn dumpHitGrid(_renderer: *mut NativeRenderer) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn dumpStdoutBuffer(_renderer: *mut NativeRenderer, _timestamp: u64) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn restoreTerminalModes(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.restore_terminal_modes();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn enableMouse(renderer: *mut NativeRenderer, enable_movement: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.enable_mouse(enable_movement);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn disableMouse(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.disable_mouse();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn enableKittyKeyboard(renderer: *mut NativeRenderer, flags: u8) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.enable_kitty_keyboard(flags);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn disableKittyKeyboard(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.disable_kitty_keyboard();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setKittyKeyboardFlags(renderer: *mut NativeRenderer, flags: u8) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.set_kitty_keyboard_flags(flags);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getKittyKeyboardFlags(renderer: *const NativeRenderer) -> u8 {
+    if renderer.is_null() {
+        return 0;
+    }
+    let renderer = unsafe { &*renderer };
+    renderer.terminal.kitty_keyboard_flags()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setupTerminal(renderer: *mut NativeRenderer, use_alternate_screen: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.setup_terminal(use_alternate_screen);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn suspendRenderer(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.suspend();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn resumeRenderer(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.resume();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn queryPixelResolution(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.query_pixel_resolution();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn writeOut(renderer: *mut NativeRenderer, data_ptr: *const u8, data_len: usize) {
+    if renderer.is_null() || data_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    renderer.terminal.write_out(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getTerminalCapabilities(
+    renderer: *const NativeRenderer,
+    out_ptr: *mut NativeTerminalCapabilities,
+) {
+    if renderer.is_null() || out_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &*renderer };
+    unsafe {
+        *out_ptr = renderer.terminal.capabilities_out();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn processCapabilityResponse(
+    renderer: *mut NativeRenderer,
+    response_ptr: *const u8,
+    response_len: usize,
+) {
+    if renderer.is_null() || response_ptr.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    let response = unsafe { std::slice::from_raw_parts(response_ptr, response_len) };
+    renderer.terminal.process_capability_response(response);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setDebugOverlay(renderer: *mut NativeRenderer, enabled: bool, corner: u8) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.debug_overlay.enabled = enabled;
+    renderer.debug_overlay.corner = corner;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setHyperlinksCapability(renderer: *mut NativeRenderer, enabled: bool) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.terminal.set_hyperlinks_capability(enabled);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn clearGlobalLinkPool() {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn hitGridPushScissorRect(
+    _renderer: *mut NativeRenderer,
+    _x: i32,
+    _y: i32,
+    _width: u32,
+    _height: u32,
+) {
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn hitGridPopScissorRect(_renderer: *mut NativeRenderer) {}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn hitGridClearScissorRects(_renderer: *mut NativeRenderer) {}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn opentui_rust_foundation_abi_hash() -> *const c_char {
