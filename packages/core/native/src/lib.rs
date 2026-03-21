@@ -20,6 +20,7 @@ pub type NativeSpanFeedSpanInfo = native_span_feed::SpanInfo;
 pub type NativeSpanFeedStats = native_span_feed::Stats;
 pub type NativeSpanFeedStream = native_span_feed::Stream;
 pub type NativeStyledChunk = text_buffer::StyledChunk;
+pub type NativeHighlight = text_buffer::ExternalHighlight;
 pub type NativeTextBuffer = text_buffer::TextBufferState;
 pub type NativeLineInfo = text_buffer_view::LineInfoOut;
 pub type NativeMeasureResult = text_buffer_view::MeasureResultOut;
@@ -449,6 +450,138 @@ pub extern "C" fn textBufferGetTextRangeByCoords(
     let tb = unsafe { &*tb };
     let text = tb.text_range_by_coords(start_row, start_col, end_row, end_col);
     copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferAddHighlightByCharRange(
+    tb: *mut NativeTextBuffer,
+    highlight_ptr: *const NativeHighlight,
+) {
+    if tb.is_null() || highlight_ptr.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let highlight = unsafe { *highlight_ptr };
+    tb.add_highlight_by_char_range(
+        highlight.start,
+        highlight.end,
+        highlight.style_id,
+        highlight.priority,
+        highlight.hl_ref,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferAddHighlight(
+    tb: *mut NativeTextBuffer,
+    line_idx: u32,
+    highlight_ptr: *const NativeHighlight,
+) {
+    if tb.is_null() || highlight_ptr.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let highlight = unsafe { *highlight_ptr };
+    tb.add_highlight(
+        line_idx as usize,
+        highlight.start,
+        highlight.end,
+        highlight.style_id,
+        highlight.priority,
+        highlight.hl_ref,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferRemoveHighlightsByRef(tb: *mut NativeTextBuffer, hl_ref: u16) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.remove_highlights_by_ref(hl_ref);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferClearLineHighlights(tb: *mut NativeTextBuffer, line_idx: u32) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.clear_line_highlights(line_idx as usize);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferClearAllHighlights(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.clear_all_highlights();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetSyntaxStyle(
+    tb: *mut NativeTextBuffer,
+    style: *const SyntaxStyleState,
+) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let style = (!style.is_null()).then_some(style);
+    tb.set_syntax_style(style);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetLineHighlightsPtr(
+    tb: *const NativeTextBuffer,
+    line_idx: u32,
+    out_count: *mut usize,
+) -> *const NativeHighlight {
+    if tb.is_null() || out_count.is_null() {
+        return core::ptr::null();
+    }
+
+    let tb = unsafe { &*tb };
+    let highlights = tb.get_line_highlights(line_idx as usize);
+    unsafe {
+        *out_count = highlights.len();
+    }
+    if highlights.is_empty() {
+        return core::ptr::null();
+    }
+
+    let boxed: Box<[NativeHighlight]> = highlights.to_vec().into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    std::mem::forget(boxed);
+    ptr
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferFreeLineHighlights(ptr: *const NativeHighlight, count: usize) {
+    if ptr.is_null() || count == 0 {
+        return;
+    }
+
+    unsafe {
+        let _ = Vec::from_raw_parts(ptr as *mut NativeHighlight, count, count);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetHighlightCount(tb: *const NativeTextBuffer) -> u32 {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    tb.get_highlight_count()
 }
 
 #[unsafe(no_mangle)]
@@ -1094,6 +1227,135 @@ pub extern "C" fn editBufferGetTextRangeByCoords(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn editBufferDeleteLine(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.delete_line();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetNextWordBoundary(
+    buffer: *const NativeEditBuffer,
+    out_ptr: *mut NativeLogicalCursor,
+) {
+    if buffer.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &*buffer };
+    unsafe {
+        *out_ptr = buffer.next_word_boundary();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetPrevWordBoundary(
+    buffer: *const NativeEditBuffer,
+    out_ptr: *mut NativeLogicalCursor,
+) {
+    if buffer.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &*buffer };
+    unsafe {
+        *out_ptr = buffer.prev_word_boundary();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferGetEOL(
+    buffer: *const NativeEditBuffer,
+    out_ptr: *mut NativeLogicalCursor,
+) {
+    if buffer.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &*buffer };
+    unsafe {
+        *out_ptr = buffer.eol();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferDebugLogRope(buffer: *const NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.debug_log_rope();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferUndo(
+    buffer: *mut NativeEditBuffer,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let Some(meta) = buffer.undo() else {
+        return 0;
+    };
+    copy_bytes_to_out(meta.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferRedo(
+    buffer: *mut NativeEditBuffer,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let Some(meta) = buffer.redo() else {
+        return 0;
+    };
+    copy_bytes_to_out(meta.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferCanUndo(buffer: *const NativeEditBuffer) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.can_undo()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferCanRedo(buffer: *const NativeEditBuffer) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.can_redo()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editBufferClearHistory(buffer: *mut NativeEditBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    buffer.clear_history();
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn createEditorView(
     edit_buffer_ptr: *mut NativeEditBuffer,
     viewport_width: u32,
@@ -1323,6 +1585,75 @@ pub extern "C" fn editorViewGetText(
 
     let view = unsafe { &*view };
     copy_bytes_to_out(view.text_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetLineInfoDirect(
+    view: *mut NativeEditorView,
+    out_ptr: *mut NativeLineInfo,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    unsafe {
+        *out_ptr = view.line_info();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetLogicalLineInfoDirect(
+    view: *mut NativeEditorView,
+    out_ptr: *mut NativeLineInfo,
+) {
+    if view.is_null() || out_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    unsafe {
+        *out_ptr = view.logical_line_info();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetPlaceholderStyledText(
+    view: *mut NativeEditorView,
+    chunks_ptr: *const NativeStyledChunk,
+    chunk_count: usize,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    let chunks = if chunks_ptr.is_null() || chunk_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(chunks_ptr, chunk_count) }
+    };
+    view.set_placeholder_styled_text(chunks);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetTabIndicator(view: *mut NativeEditorView, indicator: u32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_tab_indicator(indicator);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetTabIndicatorColor(view: *mut NativeEditorView, color: *const f32) {
+    if view.is_null() || color.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_tab_indicator_color(color_from_ptr(color));
 }
 
 #[unsafe(no_mangle)]

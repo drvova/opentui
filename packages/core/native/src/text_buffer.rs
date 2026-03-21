@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs};
 
+use crate::syntax_style::SyntaxStyleState;
 use unicode_width::UnicodeWidthChar;
 
 pub type Rgba = [f32; 4];
@@ -16,6 +17,16 @@ pub struct StyledChunk {
     pub link_len: usize,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ExternalHighlight {
+    pub start: u32,
+    pub end: u32,
+    pub style_id: u32,
+    pub priority: u8,
+    pub hl_ref: u16,
+}
+
 #[derive(Debug)]
 pub struct TextBufferState {
     width_method: u8,
@@ -25,6 +36,8 @@ pub struct TextBufferState {
     default_fg: Option<Rgba>,
     default_bg: Option<Rgba>,
     default_attributes: Option<u32>,
+    syntax_style: Option<*const SyntaxStyleState>,
+    line_highlights: Vec<Vec<ExternalHighlight>>,
     tab_width: u8,
 }
 
@@ -38,6 +51,8 @@ impl TextBufferState {
             default_fg: None,
             default_bg: None,
             default_attributes: None,
+            syntax_style: None,
+            line_highlights: Vec::new(),
             tab_width: 4,
         }
     }
@@ -68,6 +83,8 @@ impl TextBufferState {
         self.default_fg = None;
         self.default_bg = None;
         self.default_attributes = None;
+        self.syntax_style = None;
+        self.clear_all_highlights();
     }
 
     pub fn set_default_fg(&mut self, fg: Option<Rgba>) {
@@ -80,6 +97,10 @@ impl TextBufferState {
 
     pub fn set_default_attributes(&mut self, attributes: Option<u32>) {
         self.default_attributes = attributes;
+    }
+
+    pub fn set_syntax_style(&mut self, style: Option<*const SyntaxStyleState>) {
+        self.syntax_style = style;
     }
 
     pub fn reset_defaults(&mut self) {
@@ -221,6 +242,98 @@ impl TextBufferState {
 
     pub fn width_method(&self) -> u8 {
         self.width_method
+    }
+
+    pub fn add_highlight(
+        &mut self,
+        line_idx: usize,
+        col_start: u32,
+        col_end: u32,
+        style_id: u32,
+        priority: u8,
+        hl_ref: u16,
+    ) {
+        if line_idx >= self.line_count() as usize || col_start >= col_end {
+            return;
+        }
+
+        if self.line_highlights.len() <= line_idx {
+            self.line_highlights.resize_with(line_idx + 1, Vec::new);
+        }
+
+        self.line_highlights[line_idx].push(ExternalHighlight {
+            start: col_start,
+            end: col_end,
+            style_id,
+            priority,
+            hl_ref,
+        });
+    }
+
+    pub fn add_highlight_by_char_range(
+        &mut self,
+        char_start: u32,
+        char_end: u32,
+        style_id: u32,
+        priority: u8,
+        hl_ref: u16,
+    ) {
+        if char_start >= char_end || self.text.is_empty() {
+            return;
+        }
+
+        let mut pending = Vec::new();
+        let mut line_start = 0_u32;
+        for (line_idx, line) in self.text.split('\n').enumerate() {
+            let line_width = text_width(line, self.tab_width);
+            let line_end = line_start.saturating_add(line_width);
+            if line_end > char_start && line_start < char_end {
+                pending.push((
+                    line_idx,
+                    char_start.saturating_sub(line_start),
+                    char_end.min(line_end).saturating_sub(line_start),
+                    style_id,
+                    priority,
+                    hl_ref,
+                ));
+            }
+            line_start = line_end;
+        }
+
+        for (line_idx, start, end, style_id, priority, hl_ref) in pending {
+            self.add_highlight(line_idx, start, end, style_id, priority, hl_ref);
+        }
+    }
+
+    pub fn remove_highlights_by_ref(&mut self, hl_ref: u16) {
+        for line in &mut self.line_highlights {
+            line.retain(|hl| hl.hl_ref != hl_ref);
+        }
+    }
+
+    pub fn clear_line_highlights(&mut self, line_idx: usize) {
+        if let Some(line) = self.line_highlights.get_mut(line_idx) {
+            line.clear();
+        }
+    }
+
+    pub fn clear_all_highlights(&mut self) {
+        for line in &mut self.line_highlights {
+            line.clear();
+        }
+    }
+
+    pub fn get_line_highlights(&self, line_idx: usize) -> &[ExternalHighlight] {
+        self.line_highlights
+            .get(line_idx)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn get_highlight_count(&self) -> u32 {
+        self.line_highlights.iter().fold(0_u32, |count, line| {
+            count.saturating_add(u32::try_from(line.len()).unwrap_or(u32::MAX))
+        })
     }
 
     pub(crate) fn set_text_bytes(&mut self, data: &[u8]) {

@@ -1,6 +1,7 @@
 use crate::{
     edit_buffer::{EditBufferState, LogicalCursor},
-    text_buffer_view::TextBufferViewState,
+    text_buffer::StyledChunk,
+    text_buffer_view::{LineInfoOut, TextBufferViewState},
 };
 
 #[repr(C)]
@@ -22,6 +23,7 @@ pub struct EditorViewState {
     viewport_width: u32,
     viewport_height: u32,
     scroll_margin: f32,
+    placeholder_text: String,
 }
 
 impl EditorViewState {
@@ -42,11 +44,20 @@ impl EditorViewState {
             viewport_width,
             viewport_height,
             scroll_margin: 0.0,
+            placeholder_text: String::new(),
         }
     }
 
     pub fn text_buffer_view_ptr(&mut self) -> *mut TextBufferViewState {
         self.text_buffer_view.as_mut() as *mut TextBufferViewState
+    }
+
+    pub fn line_info(&mut self) -> LineInfoOut {
+        self.text_buffer_view.line_info()
+    }
+
+    pub fn logical_line_info(&mut self) -> LineInfoOut {
+        self.text_buffer_view.logical_line_info()
     }
 
     pub fn set_viewport_size(&mut self, width: u32, height: u32) {
@@ -144,6 +155,26 @@ impl EditorViewState {
 
     pub fn text_bytes(&self) -> &[u8] {
         self.edit_buffer().text_bytes()
+    }
+
+    pub fn set_placeholder_styled_text(&mut self, chunks: &[StyledChunk]) {
+        self.placeholder_text.clear();
+        for chunk in chunks {
+            if chunk.text_ptr.is_null() || chunk.text_len == 0 {
+                continue;
+            }
+            let bytes = unsafe { std::slice::from_raw_parts(chunk.text_ptr, chunk.text_len) };
+            self.placeholder_text
+                .push_str(&String::from_utf8_lossy(bytes));
+        }
+    }
+
+    pub fn set_tab_indicator(&mut self, indicator: u32) {
+        self.text_buffer_view.set_tab_indicator(indicator);
+    }
+
+    pub fn set_tab_indicator_color(&mut self, color: [f32; 4]) {
+        self.text_buffer_view.set_tab_indicator_color(color);
     }
 
     pub fn cursor(&self) -> (u32, u32) {

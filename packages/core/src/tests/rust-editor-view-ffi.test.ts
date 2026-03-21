@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { dlopen, ptr } from "bun:ffi"
 import { expect, test } from "bun:test"
 
-import { VisualCursorStruct } from "../zig-structs.js"
+import { LineInfoStruct, StyledChunkStruct, VisualCursorStruct } from "../zig-structs.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -45,6 +45,8 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
     editorViewGetSelectedTextBytes: { args: ["ptr", "ptr", "usize"], returns: "usize" },
     editorViewGetCursor: { args: ["ptr", "ptr", "ptr"], returns: "void" },
     editorViewGetText: { args: ["ptr", "ptr", "usize"], returns: "usize" },
+    editorViewGetLineInfoDirect: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewGetLogicalLineInfoDirect: { args: ["ptr", "ptr"], returns: "void" },
     editorViewSetLocalSelection: {
       args: ["ptr", "i32", "i32", "i32", "i32", "ptr", "ptr", "bool", "bool"],
       returns: "bool",
@@ -64,6 +66,9 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
     editorViewGetEOL: { args: ["ptr", "ptr"], returns: "void" },
     editorViewGetVisualSOL: { args: ["ptr", "ptr"], returns: "void" },
     editorViewGetVisualEOL: { args: ["ptr", "ptr"], returns: "void" },
+    editorViewSetPlaceholderStyledText: { args: ["ptr", "ptr", "usize"], returns: "void" },
+    editorViewSetTabIndicator: { args: ["ptr", "u32"], returns: "void" },
+    editorViewSetTabIndicatorColor: { args: ["ptr", "ptr"], returns: "void" },
   }).symbols
 
   const edit = lib.createEditBuffer(0)
@@ -95,6 +100,15 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
   expect(lib.editorViewGetVirtualLineCount(view)).toBe(3)
   expect(lib.editorViewGetTotalVirtualLineCount(view)).toBe(3)
   lib.editorViewSetViewport(view, 0, 0, 5, 20, true)
+
+  const lineInfoBuffer = new ArrayBuffer(LineInfoStruct.size)
+  lib.editorViewGetLineInfoDirect(view, ptr(lineInfoBuffer))
+  const lineInfo = LineInfoStruct.unpack(lineInfoBuffer)
+  expect((lineInfo.startCols as number[]).length).toBeGreaterThan(0)
+  const logicalInfoBuffer = new ArrayBuffer(LineInfoStruct.size)
+  lib.editorViewGetLogicalLineInfoDirect(view, ptr(logicalInfoBuffer))
+  const logicalInfo = LineInfoStruct.unpack(logicalInfoBuffer)
+  expect((logicalInfo.startCols as number[]).length).toBeGreaterThan(0)
 
   lib.editorViewSetSelection(view, 6, 11, null, null)
   let packed = lib.editorViewGetSelection(view)
@@ -143,6 +157,11 @@ runRustEditorViewSmoke("Rust EditorView cdylib supports viewport, wrap, selectio
 
   lib.editorViewMoveUpVisual(view)
   lib.editorViewMoveDownVisual(view)
+
+  const placeholder = StyledChunkStruct.packList([{ text: "placeholder", fg: null, bg: null, attributes: 0 }])
+  lib.editorViewSetPlaceholderStyledText(view, ptr(placeholder), 1)
+  lib.editorViewSetTabIndicator(view, ".".codePointAt(0)!)
+  lib.editorViewSetTabIndicatorColor(view, new Float32Array([1, 0, 0, 1]))
 
   const text = new Uint8Array(16)
   const textLen = Number(lib.editorViewGetText(view, text, text.length))

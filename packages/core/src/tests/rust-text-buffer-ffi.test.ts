@@ -2,8 +2,9 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { dlopen, ptr } from "bun:ffi"
+import { dlopen, ptr, toArrayBuffer } from "bun:ffi"
 import { expect, test } from "bun:test"
+import { HighlightStruct } from "../zig-structs.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -25,6 +26,9 @@ runRustTextBufferSmoke("Rust TextBuffer cdylib supports set/append/readback prim
   const lib = dlopen(rustLibPath, {
     createTextBuffer: { args: ["u8"], returns: "ptr" },
     destroyTextBuffer: { args: ["ptr"], returns: "void" },
+    createSyntaxStyle: { args: [], returns: "ptr" },
+    destroySyntaxStyle: { args: ["ptr"], returns: "void" },
+    syntaxStyleRegister: { args: ["ptr", "ptr", "usize", "ptr", "ptr", "u32"], returns: "u32" },
     textBufferGetLength: { args: ["ptr"], returns: "u32" },
     textBufferGetByteSize: { args: ["ptr"], returns: "u32" },
     textBufferReset: { args: ["ptr"], returns: "void" },
@@ -44,6 +48,15 @@ runRustTextBufferSmoke("Rust TextBuffer cdylib supports set/append/readback prim
     },
     textBufferGetTabWidth: { args: ["ptr"], returns: "u8" },
     textBufferSetTabWidth: { args: ["ptr", "u8"], returns: "void" },
+    textBufferAddHighlightByCharRange: { args: ["ptr", "ptr"], returns: "void" },
+    textBufferAddHighlight: { args: ["ptr", "u32", "ptr"], returns: "void" },
+    textBufferRemoveHighlightsByRef: { args: ["ptr", "u16"], returns: "void" },
+    textBufferClearLineHighlights: { args: ["ptr", "u32"], returns: "void" },
+    textBufferClearAllHighlights: { args: ["ptr"], returns: "void" },
+    textBufferSetSyntaxStyle: { args: ["ptr", "ptr"], returns: "void" },
+    textBufferGetLineHighlightsPtr: { args: ["ptr", "u32", "ptr"], returns: "ptr" },
+    textBufferFreeLineHighlights: { args: ["ptr", "usize"], returns: "void" },
+    textBufferGetHighlightCount: { args: ["ptr"], returns: "u32" },
   }).symbols
 
   const textBuffer = lib.createTextBuffer(0)
@@ -95,5 +108,41 @@ runRustTextBufferSmoke("Rust TextBuffer cdylib supports set/append/readback prim
   lib.textBufferSetTextFromMem(textBuffer, memId)
   expect(lib.textBufferGetLength(textBuffer)).toBe(0)
   lib.textBufferClearMemRegistry(textBuffer)
+
+  const syntaxStyle = lib.createSyntaxStyle()
+  const syntaxName = new TextEncoder().encode("keyword")
+  const fg = new Float32Array([1, 0, 0, 1])
+  const styleId = lib.syntaxStyleRegister(syntaxStyle, syntaxName, syntaxName.length, fg, null, 1)
+  lib.textBufferSetSyntaxStyle(textBuffer, syntaxStyle)
+  const memId2 = lib.textBufferRegisterMemBuffer(textBuffer, initial, initial.length, false)
+  expect(memId2).not.toBe(0xffff)
+  lib.textBufferSetTextFromMem(textBuffer, memId2)
+
+  const packedHighlight = HighlightStruct.pack({ start: 0, end: 5, styleId, priority: 2, hlRef: 77 })
+  lib.textBufferAddHighlight(textBuffer, 0, ptr(packedHighlight))
+  expect(lib.textBufferGetHighlightCount(textBuffer)).toBe(1)
+
+  const countBuffer = new BigUint64Array(1)
+  const nativePtr = lib.textBufferGetLineHighlightsPtr(textBuffer, 0, countBuffer)
+  expect(nativePtr).not.toBe(0)
+  const count = Number(countBuffer[0])
+  expect(count).toBe(1)
+  const nativeBytes = toArrayBuffer(nativePtr, 0, count * HighlightStruct.size)
+  const [highlight] = HighlightStruct.unpackList(nativeBytes, count)
+  expect(highlight.hlRef).toBe(77)
+  lib.textBufferFreeLineHighlights(nativePtr, count)
+
+  const packedRangeHighlight = HighlightStruct.pack({ start: 0, end: 5, styleId, priority: 1, hlRef: 88 })
+  lib.textBufferAddHighlightByCharRange(textBuffer, ptr(packedRangeHighlight))
+  expect(lib.textBufferGetHighlightCount(textBuffer)).toBe(2)
+  lib.textBufferRemoveHighlightsByRef(textBuffer, 77)
+  expect(lib.textBufferGetHighlightCount(textBuffer)).toBe(1)
+  lib.textBufferClearLineHighlights(textBuffer, 0)
+  expect(lib.textBufferGetHighlightCount(textBuffer)).toBe(0)
+  lib.textBufferAddHighlight(textBuffer, 0, ptr(packedHighlight))
+  lib.textBufferClearAllHighlights(textBuffer)
+  expect(lib.textBufferGetHighlightCount(textBuffer)).toBe(0)
+
+  lib.destroySyntaxStyle(syntaxStyle)
   lib.destroyTextBuffer(textBuffer)
 })

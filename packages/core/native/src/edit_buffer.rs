@@ -16,11 +16,19 @@ pub struct LogicalCursor {
     pub offset: u32,
 }
 
+#[derive(Clone, Debug)]
+struct EditBufferSnapshot {
+    text: String,
+    cursor_offset: u32,
+}
+
 #[derive(Debug)]
 pub struct EditBufferState {
     id: u16,
     text_buffer: Box<TextBufferState>,
     cursor_offset: u32,
+    undo_stack: Vec<EditBufferSnapshot>,
+    redo_stack: Vec<EditBufferSnapshot>,
 }
 
 impl EditBufferState {
@@ -29,6 +37,8 @@ impl EditBufferState {
             id: NEXT_EDIT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
             text_buffer: Box::new(TextBufferState::new(width_method)),
             cursor_offset: 0,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 
@@ -43,19 +53,29 @@ impl EditBufferState {
     pub fn set_text_bytes(&mut self, data: &[u8]) {
         self.text_buffer.set_text_bytes(data);
         self.cursor_offset = 0;
+        self.clear_history();
     }
 
     pub fn set_text_from_mem(&mut self, mem_id: u8) {
         self.text_buffer.set_text_from_mem(mem_id);
         self.cursor_offset = 0;
+        self.clear_history();
     }
 
     pub fn replace_text_bytes(&mut self, data: &[u8]) {
-        self.set_text_bytes(data);
+        if self.text_buffer.text_str().as_bytes() == data {
+            return;
+        }
+
+        self.store_undo();
+        self.text_buffer.set_text_bytes(data);
+        self.cursor_offset = 0;
     }
 
     pub fn replace_text_from_mem(&mut self, mem_id: u8) {
-        self.set_text_from_mem(mem_id);
+        self.store_undo();
+        self.text_buffer.set_text_from_mem(mem_id);
+        self.cursor_offset = 0;
     }
 
     pub fn text_bytes(&self) -> &[u8] {
@@ -63,6 +83,12 @@ impl EditBufferState {
     }
 
     pub fn clear(&mut self) {
+        if self.text_buffer.text_str().is_empty() {
+            self.cursor_offset = 0;
+            return;
+        }
+
+        self.store_undo();
         self.text_buffer.clear();
         self.cursor_offset = 0;
     }
@@ -159,6 +185,11 @@ impl EditBufferState {
     }
 
     pub fn insert_text(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+
+        self.store_undo();
         self.cursor_offset = self
             .text_buffer
             .insert_text_at_offset(self.cursor_offset, data);
@@ -219,6 +250,11 @@ impl EditBufferState {
     }
 
     pub fn delete_range_by_offsets(&mut self, start: u32, end: u32) {
+        if start == end {
+            return;
+        }
+
+        self.store_undo();
         self.cursor_offset = self.text_buffer.delete_range_by_offsets(start, end);
     }
 
@@ -316,6 +352,116 @@ impl EditBufferState {
     ) -> String {
         self.text_buffer
             .text_range_by_coords(start_row, start_col, end_row, end_col)
+    }
+
+    fn snapshot(&self) -> EditBufferSnapshot {
+        EditBufferSnapshot {
+            text: self.text_buffer.text_str().to_string(),
+            cursor_offset: self.cursor_offset,
+        }
+    }
+
+    fn restore_snapshot(&mut self, snapshot: EditBufferSnapshot) {
+        self.text_buffer.set_text_bytes(snapshot.text.as_bytes());
+        self.cursor_offset = snapshot.cursor_offset.min(text_weight(
+            self.text_buffer.text_str(),
+            self.text_buffer.tab_width(),
+        ));
+    }
+
+    fn store_undo(&mut self) {
+        self.undo_stack.push(self.snapshot());
+        self.redo_stack.clear();
+    }
+
+    fn pop_undo(&mut self) -> Option<EditBufferSnapshot> {
+        self.undo_stack.pop()
+    }
+
+    fn pop_redo(&mut self) -> Option<EditBufferSnapshot> {
+        self.redo_stack.pop()
+    }
+
+    fn push_redo(&mut self, snapshot: EditBufferSnapshot) {
+        self.redo_stack.push(snapshot);
+    }
+
+    pub fn delete_line(&mut self) {
+        let cursor = self.cursor();
+        let line_count = self.text_buffer.line_count();
+
+        if line_count == 0 || cursor.row >= line_count {
+            return;
+        }
+
+        if cursor.row + 1 < line_count {
+            self.delete_range_by_coords(cursor.row, 0, cursor.row + 1, 0);
+            return;
+        }
+
+        if cursor.row > 0 {
+            let previous_row = cursor.row - 1;
+            let previous_width = line_width_at(
+                self.text_buffer.text_str(),
+                self.text_buffer.tab_width(),
+                previous_row,
+            );
+            let current_width = line_width_at(
+                self.text_buffer.text_str(),
+                self.text_buffer.tab_width(),
+                cursor.row,
+            );
+            self.delete_range_by_coords(previous_row, previous_width, cursor.row, current_width);
+            self.set_cursor_to_line_col(previous_row, previous_width);
+            return;
+        }
+
+        let line_width = line_width_at(
+            self.text_buffer.text_str(),
+            self.text_buffer.tab_width(),
+            cursor.row,
+        );
+        if line_width > 0 {
+            self.delete_range_by_coords(cursor.row, 0, cursor.row, line_width);
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
+    }
+
+    pub fn clear_history(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
+    pub fn debug_log_rope(&self) {
+        eprintln!(
+            "EditBufferState {{ id: {}, cursor_offset: {}, text: {:?}, undo: {}, redo: {} }}",
+            self.id,
+            self.cursor_offset,
+            self.text_buffer.text_str(),
+            self.undo_stack.len(),
+            self.redo_stack.len()
+        );
+    }
+
+    pub fn undo(&mut self) -> Option<String> {
+        let snapshot = self.pop_undo()?;
+        self.push_redo(self.snapshot());
+        self.restore_snapshot(snapshot);
+        Some(String::from("undo"))
+    }
+
+    pub fn redo(&mut self) -> Option<String> {
+        let snapshot = self.pop_redo()?;
+        self.undo_stack.push(self.snapshot());
+        self.restore_snapshot(snapshot);
+        Some(String::from("redo"))
     }
 }
 

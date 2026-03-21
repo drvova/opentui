@@ -31,6 +31,7 @@ runRustEditBufferSmoke("Rust EditBuffer cdylib supports basic text editing and c
     editBufferGetText: { args: ["ptr", "ptr", "usize"], returns: "usize" },
     editBufferInsertText: { args: ["ptr", "ptr", "usize"], returns: "void" },
     editBufferDeleteCharBackward: { args: ["ptr"], returns: "void" },
+    editBufferDeleteLine: { args: ["ptr"], returns: "void" },
     editBufferNewLine: { args: ["ptr"], returns: "void" },
     editBufferSetCursorToLineCol: { args: ["ptr", "u32", "u32"], returns: "void" },
     editBufferGetCursorPosition: { args: ["ptr", "ptr"], returns: "void" },
@@ -48,6 +49,15 @@ runRustEditBufferSmoke("Rust EditBuffer cdylib supports basic text editing and c
       args: ["ptr", "u32", "u32", "u32", "u32", "ptr", "usize"],
       returns: "usize",
     },
+    editBufferGetNextWordBoundary: { args: ["ptr", "ptr"], returns: "void" },
+    editBufferGetPrevWordBoundary: { args: ["ptr", "ptr"], returns: "void" },
+    editBufferGetEOL: { args: ["ptr", "ptr"], returns: "void" },
+    editBufferCanUndo: { args: ["ptr"], returns: "bool" },
+    editBufferCanRedo: { args: ["ptr"], returns: "bool" },
+    editBufferClearHistory: { args: ["ptr"], returns: "void" },
+    editBufferDebugLogRope: { args: ["ptr"], returns: "void" },
+    editBufferUndo: { args: ["ptr", "ptr", "usize"], returns: "usize" },
+    editBufferRedo: { args: ["ptr", "ptr", "usize"], returns: "usize" },
     editBufferClear: { args: ["ptr"], returns: "void" },
   }).symbols
 
@@ -103,6 +113,30 @@ runRustEditBufferSmoke("Rust EditBuffer cdylib supports basic text editing and c
   const coordRange = new Uint8Array(16)
   const coordLen = Number(lib.editBufferGetTextRangeByCoords(buffer, 1, 0, 1, 4, coordRange, coordRange.length))
   expect(new TextDecoder().decode(coordRange.slice(0, coordLen))).toBe("Next")
+
+  expect(lib.editBufferCanUndo(buffer)).toBe(true)
+  const meta = new Uint8Array(16)
+  const undoLen = Number(lib.editBufferUndo(buffer, meta, meta.length))
+  expect(new TextDecoder().decode(meta.slice(0, undoLen))).toBe("undo")
+  expect(lib.editBufferCanRedo(buffer)).toBe(true)
+  const redoLen = Number(lib.editBufferRedo(buffer, meta, meta.length))
+  expect(new TextDecoder().decode(meta.slice(0, redoLen))).toBe("redo")
+  lib.editBufferClearHistory(buffer)
+  expect(lib.editBufferCanUndo(buffer)).toBe(false)
+
+  lib.editBufferSetText(buffer, new TextEncoder().encode("hello world"), 11)
+  lib.editBufferSetCursorToLineCol(buffer, 0, 6)
+  lib.editBufferGetNextWordBoundary(buffer, ptr(cursorBuffer))
+  expect(LogicalCursorStruct.unpack(cursorBuffer).offset).toBeGreaterThanOrEqual(6)
+  lib.editBufferGetPrevWordBoundary(buffer, ptr(cursorBuffer))
+  expect(LogicalCursorStruct.unpack(cursorBuffer).offset).toBeLessThanOrEqual(6)
+  lib.editBufferGetEOL(buffer, ptr(cursorBuffer))
+  expect(LogicalCursorStruct.unpack(cursorBuffer).col).toBe(11)
+  lib.editBufferDebugLogRope(buffer)
+  lib.editBufferDeleteLine(buffer)
+  const deleted = new Uint8Array(16)
+  const deletedLen = Number(lib.editBufferGetText(buffer, deleted, deleted.length))
+  expect(deletedLen).toBe(0)
 
   lib.editBufferClear(buffer)
   const out4 = new Uint8Array(8)
