@@ -1,4 +1,6 @@
-use crate::text_buffer::{TextBufferState, copy_bytes_to_out, line_start_offset, text_width};
+use crate::text_buffer::{
+    TextBufferState, copy_bytes_to_out, line_start_offset, next_offset, text_width,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -35,6 +37,7 @@ pub const NO_SELECTION: u64 = 0xffff_ffff_ffff_ffff;
 pub struct TextBufferViewState {
     text_buffer: *mut TextBufferState,
     selection: Option<(u32, u32)>,
+    local_selection_anchor: Option<u32>,
     wrap_width: Option<u32>,
     wrap_mode: u8,
     viewport_x: u32,
@@ -55,6 +58,7 @@ impl TextBufferViewState {
         Self {
             text_buffer,
             selection: None,
+            local_selection_anchor: None,
             wrap_width: None,
             wrap_mode: 0,
             viewport_x: 0,
@@ -73,16 +77,19 @@ impl TextBufferViewState {
 
     pub fn set_selection(&mut self, start: u32, end: u32) {
         self.selection = normalize_selection(start, end);
+        self.local_selection_anchor = Some(start);
     }
 
     pub fn update_selection(&mut self, end: u32) {
-        self.selection = self
-            .selection
-            .and_then(|(start, _)| normalize_selection(start, end));
+        let anchor = self
+            .local_selection_anchor
+            .or_else(|| self.selection.map(|(start, _)| start));
+        self.selection = anchor.and_then(|start| normalize_selection(start, end));
     }
 
     pub fn reset_selection(&mut self) {
         self.selection = None;
+        self.local_selection_anchor = None;
     }
 
     pub fn set_local_selection(
@@ -98,6 +105,7 @@ impl TextBufferViewState {
         let Some(focus) = self.visual_coords_to_offset(focus_x, focus_y) else {
             return false;
         };
+        self.local_selection_anchor = Some(anchor);
         self.selection = normalize_selection(anchor, focus);
         true
     }
@@ -109,7 +117,18 @@ impl TextBufferViewState {
         focus_x: i32,
         focus_y: i32,
     ) -> bool {
-        self.set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+        let anchor = self
+            .local_selection_anchor
+            .or_else(|| self.visual_coords_to_offset(anchor_x, anchor_y));
+        let Some(anchor) = anchor else {
+            return false;
+        };
+        let Some(focus) = self.visual_coords_to_offset(focus_x, focus_y) else {
+            return false;
+        };
+        self.local_selection_anchor = Some(anchor);
+        self.selection = normalize_selection(anchor, focus);
+        true
     }
 
     pub fn reset_local_selection(&mut self) {
@@ -203,9 +222,15 @@ impl TextBufferViewState {
             let next_start = lines
                 .get(index + 1)
                 .map(|next| next.start_offset)
-                .unwrap_or(u32::MAX);
+                .unwrap_or(
+                    line.start_offset
+                        .saturating_add(line.width_cols)
+                        .saturating_add(1),
+                );
             if offset >= line.start_offset && offset < next_start {
-                let visual_col = offset.saturating_sub(line.start_offset);
+                let visual_col = offset
+                    .saturating_sub(line.start_offset)
+                    .min(line.width_cols);
                 return (
                     u32::try_from(index).unwrap_or(u32::MAX),
                     visual_col,
@@ -227,10 +252,7 @@ impl TextBufferViewState {
         let lines = self.compute_virtual_lines(false);
         let visual_row = usize::try_from(visual_row).ok()?;
         let line = lines.get(visual_row)?;
-        Some(
-            line.start_offset
-                .saturating_add(visual_col.min(line.width_cols)),
-        )
+        Some(self.snap_visual_offset(*line, visual_col.min(line.width_cols)))
     }
 
     fn buffer(&self) -> &TextBufferState {
@@ -287,14 +309,29 @@ impl TextBufferViewState {
         let visual_col = self.viewport_x.saturating_add(x as u32);
         let lines = self.compute_virtual_lines(false);
         let line = lines.get(visual_row)?;
-        Some(
-            line.start_offset
-                .saturating_add(visual_col.min(line.width_cols)),
-        )
+        Some(self.snap_visual_offset(*line, visual_col.min(line.width_cols)))
     }
 
     fn compute_virtual_lines(&self, logical_only: bool) -> Vec<VirtualLine> {
         self.compute_virtual_lines_with_width(logical_only, self.wrap_width)
+    }
+
+    fn snap_visual_offset(&self, line: VirtualLine, visual_col: u32) -> u32 {
+        let text = std::str::from_utf8(self.buffer().plain_text_bytes()).unwrap_or("");
+        let tab_width = self.buffer().tab_width();
+        let target = line
+            .start_offset
+            .saturating_add(visual_col.min(line.width_cols));
+
+        let mut offset = line.start_offset;
+        while offset < target {
+            let next = next_offset(text, tab_width, offset);
+            if next <= offset || next > target {
+                break;
+            }
+            offset = next;
+        }
+        offset
     }
 
     fn compute_virtual_lines_with_width(
@@ -408,10 +445,10 @@ impl TextBufferViewState {
 }
 
 fn normalize_selection(start: u32, end: u32) -> Option<(u32, u32)> {
-    if start >= end {
+    if start == end {
         None
     } else {
-        Some((start, end))
+        Some((start.min(end), start.max(end)))
     }
 }
 

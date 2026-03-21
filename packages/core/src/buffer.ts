@@ -1,5 +1,5 @@
 import { RGBA } from "./lib"
-import { resolveRenderLib, type RenderLib } from "./zig"
+import { resolveRenderLib, type RenderLib } from "./native"
 import { type Pointer, toArrayBuffer, ptr } from "bun:ffi"
 import { type BorderStyle, type BorderSides, BorderCharArrays, parseBorderStyle } from "./lib/index.js"
 import { TargetChannel, type WidthMethod, type CapturedSpan, type CapturedLine } from "./types.js"

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { dlopen, ptr } from "bun:ffi"
 import { expect, test } from "bun:test"
 
-import { CursorStateStruct, CursorStyleOptionsStruct, TerminalCapabilitiesStruct } from "../zig-structs.js"
+import { CursorStateStruct, CursorStyleOptionsStruct, TerminalCapabilitiesStruct } from "../native-structs.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)

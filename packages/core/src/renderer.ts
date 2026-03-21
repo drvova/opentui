@@ -12,7 +12,7 @@ import {
 import { RGBA, parseColor, type ColorInput } from "./lib/RGBA.js"
 import type { Pointer } from "bun:ffi"
 import { OptimizedBuffer } from "./buffer.js"
-import { resolveRenderLib, type RenderLib } from "./zig.js"
+import { resolveRenderLib, type RenderLib } from "./native.js"
 import { TerminalConsole, type ConsoleOptions, capture } from "./console.js"
 import { type MouseEventType, type RawMouseEvent, type ScrollInfo } from "./lib/parse.mouse.js"
 import { Selection } from "./lib/selection.js"
@@ -291,8 +291,8 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   const renderHeight =
     config.experimental_splitHeight && config.experimental_splitHeight > 0 ? config.experimental_splitHeight : height
 
-  const ziglib = resolveRenderLib()
-  const rendererPtr = ziglib.createRenderer(width, renderHeight, {
+  const nativeLib = resolveRenderLib()
+  const rendererPtr = nativeLib.createRenderer(width, renderHeight, {
     remote: config.remote ?? false,
     testing: config.testing ?? false,
   })
@@ -308,14 +308,14 @@ export async function createCliRenderer(config: CliRendererConfig = {}): Promise
   if (process.platform === "linux") {
     config.useThread = false
   }
-  ziglib.setUseThread(rendererPtr, config.useThread)
+  nativeLib.setUseThread(rendererPtr, config.useThread)
 
   const kittyConfig = config.useKittyKeyboard ?? {}
   const kittyFlags = buildKittyKeyboardFlags(kittyConfig)
 
-  ziglib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
+  nativeLib.setKittyKeyboardFlags(rendererPtr, kittyFlags)
 
-  const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
+  const renderer = new CliRenderer(nativeLib, rendererPtr, stdin, stdout, width, height, config)
   if (!config.testing) {
     await renderer.setupTerminal()
   }

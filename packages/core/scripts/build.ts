@@ -8,6 +8,8 @@ import path from "path"
 interface Variant {
   platform: string
   arch: string
+  rustTarget: string
+  libraryFileName: string
 }
 
 interface PackageJson {
@@ -40,16 +42,19 @@ const args = process.argv.slice(2)
 const buildLib = args.find((arg) => arg === "--lib")
 const buildNative = args.find((arg) => arg === "--native")
 const isDev = args.includes("--dev")
-const buildAll = args.includes("--all") // Build for all platforms
-const gpaSafeStats = args.includes("--gpa-safe-stats")
+const buildAll = args.includes("--all")
+const explicitVariants = readFlagValues("--variant")
+const explicitPlatform = readFlagValue("--platform")
+const explicitArch = readFlagValue("--arch")
+const explicitRustTarget = readFlagValue("--target")
 
 const variants: Variant[] = [
-  { platform: "darwin", arch: "x64" },
-  { platform: "darwin", arch: "arm64" },
-  { platform: "linux", arch: "x64" },
-  { platform: "linux", arch: "arm64" },
-  { platform: "win32", arch: "x64" },
-  { platform: "win32", arch: "arm64" },
+  { platform: "darwin", arch: "x64", rustTarget: "x86_64-apple-darwin", libraryFileName: "libopentui.dylib" },
+  { platform: "darwin", arch: "arm64", rustTarget: "aarch64-apple-darwin", libraryFileName: "libopentui.dylib" },
+  { platform: "linux", arch: "x64", rustTarget: "x86_64-unknown-linux-gnu", libraryFileName: "libopentui.so" },
+  { platform: "linux", arch: "arm64", rustTarget: "aarch64-unknown-linux-gnu", libraryFileName: "libopentui.so" },
+  { platform: "win32", arch: "x64", rustTarget: "x86_64-pc-windows-msvc", libraryFileName: "opentui.dll" },
+  { platform: "win32", arch: "arm64", rustTarget: "aarch64-pc-windows-msvc", libraryFileName: "opentui.dll" },
 ]
 
 if (!buildLib && !buildNative) {
@@ -57,10 +62,35 @@ if (!buildLib && !buildNative) {
   process.exit(1)
 }
 
-const getZigTarget = (platform: string, arch: string): string => {
-  const platformMap: Record<string, string> = { darwin: "macos", win32: "windows", linux: "linux" }
-  const archMap: Record<string, string> = { x64: "x86_64", arm64: "aarch64" }
-  return `${archMap[arch] ?? arch}-${platformMap[platform] ?? platform}`
+function readFlagValue(flag: string): string | null {
+  const direct = args.find((arg) => arg.startsWith(`${flag}=`))
+  if (direct) {
+    return direct.slice(flag.length + 1)
+  }
+
+  const index = args.indexOf(flag)
+  if (index === -1 || index === args.length - 1) {
+    return null
+  }
+
+  return args[index + 1]
+}
+
+function readFlagValues(flag: string): string[] {
+  const values: string[] = []
+
+  args.forEach((arg, index) => {
+    if (arg.startsWith(`${flag}=`)) {
+      values.push(arg.slice(flag.length + 1))
+      return
+    }
+
+    if (arg === flag && index < args.length - 1) {
+      values.push(args[index + 1])
+    }
+  })
+
+  return values
 }
 
 const replaceLinks = (text: string): string => {
@@ -79,64 +109,124 @@ if (missingRequired.length > 0) {
   process.exit(1)
 }
 
-if (buildNative) {
-  console.log(`Building native ${isDev ? "dev" : "prod"} binaries${buildAll ? " for all platforms" : ""}...`)
+const hostPlatform = process.platform
+const hostArch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x64" : process.arch
+const hostVariant = variants.find((variant) => variant.platform === hostPlatform && variant.arch === hostArch)
 
-  const zigArgs = ["build", `-Doptimize=${isDev ? "Debug" : "ReleaseFast"}`]
+function resolveVariants(): Variant[] {
+  if (explicitVariants.length > 0 && (explicitPlatform || explicitArch || explicitRustTarget)) {
+    console.error("Error: --variant cannot be combined with --platform, --arch, or --target.")
+    process.exit(1)
+  }
+
+  if (explicitVariants.length > 0) {
+    return explicitVariants.map((value) => {
+      const variant = variants.find((candidate) => `${candidate.platform}-${candidate.arch}` === value)
+      if (!variant) {
+        console.error(`Error: Unsupported native variant ${value}.`)
+        process.exit(1)
+      }
+      return variant
+    })
+  }
+
   if (buildAll) {
-    zigArgs.push("-Dall")
-  }
-  if (gpaSafeStats) {
-    zigArgs.push("-Dgpa-safe-stats=true")
+    return variants.filter((candidate) => candidate.platform === hostPlatform)
   }
 
-  const zigBuild: SpawnSyncReturns<Buffer> = spawnSync("zig", zigArgs, {
-    cwd: join(rootDir, "src", "zig"),
-    stdio: "inherit",
-  })
+  if (explicitPlatform || explicitArch) {
+    if (!explicitPlatform || !explicitArch) {
+      console.error("Error: --platform and --arch must be provided together.")
+      process.exit(1)
+    }
 
-  if (zigBuild.error) {
-    console.error("Error: Zig is not installed or not in PATH")
+    const variant = variants.find((candidate) => candidate.platform === explicitPlatform && candidate.arch === explicitArch)
+    if (!variant) {
+      console.error(`Error: Unsupported native variant ${explicitPlatform}-${explicitArch}.`)
+      process.exit(1)
+    }
+
+    if (explicitRustTarget && explicitRustTarget !== variant.rustTarget) {
+      console.error(`Error: --target ${explicitRustTarget} does not match ${explicitPlatform}-${explicitArch} (${variant.rustTarget}).`)
+      process.exit(1)
+    }
+
+    return [variant]
+  }
+
+  if (explicitRustTarget) {
+    const variant = variants.find((candidate) => candidate.rustTarget === explicitRustTarget)
+    if (!variant) {
+      console.error(`Error: Unsupported Rust target ${explicitRustTarget}.`)
+      process.exit(1)
+    }
+    return [variant]
+  }
+
+  if (!hostVariant) {
+    console.error(`Error: Unsupported host platform ${hostPlatform}-${hostArch}.`)
     process.exit(1)
   }
 
-  if (zigBuild.status !== 0) {
-    console.error("Error: Zig build failed")
-    process.exit(1)
+  return [hostVariant]
+}
+
+if (buildNative) {
+  const requestedVariants = resolveVariants()
+  const profileDir = isDev ? "debug" : "release"
+  const nativeDirRoot = join(rootDir, "node_modules", "@opentui")
+
+  const runOrFail = (command: string, commandArgs: string[], env?: NodeJS.ProcessEnv): void => {
+    const result: SpawnSyncReturns<Buffer> = spawnSync(command, commandArgs, {
+      cwd: join(rootDir, "native"),
+      stdio: "inherit",
+      env: env ?? process.env,
+    })
+
+    if (result.error) {
+      console.error(`Error: Failed to run ${command}.`)
+      process.exit(1)
+    }
+
+    if (result.status !== 0) {
+      console.error(`Error: Command failed: ${command} ${commandArgs.join(" ")}`)
+      process.exit(1)
+    }
   }
 
-  for (const { platform, arch } of variants) {
-    const nativeName = `${packageJson.name}-${platform}-${arch}`
-    const nativeDir = join(rootDir, "node_modules", nativeName)
-    const libDir = join(rootDir, "src", "zig", "lib", getZigTarget(platform, arch))
+  for (const variant of requestedVariants) {
+    const rustupArgs = ["target", "add", variant.rustTarget]
+    runOrFail("rustup", rustupArgs)
+
+    const cargoArgs = variant.platform === "win32" && hostPlatform !== "win32" ? ["xwin", "build"] : ["build"]
+    if (!isDev) {
+      cargoArgs.push("--release")
+    }
+    cargoArgs.push("--target", variant.rustTarget)
+
+    const buildEnv = { ...process.env }
+    if (variant.rustTarget === "aarch64-unknown-linux-gnu" && hostPlatform === "linux") {
+      buildEnv.CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER =
+        buildEnv.CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER || "aarch64-linux-gnu-gcc"
+    }
+
+    console.log(`Building Rust native ${isDev ? "dev" : "prod"} library for ${variant.platform}-${variant.arch}...`)
+    runOrFail("cargo", cargoArgs, buildEnv)
+
+    const nativeName = `${packageJson.name}-${variant.platform}-${variant.arch}`
+    const nativeDir = join(nativeDirRoot, nativeName)
+    const src = join(rootDir, "native", "target", variant.rustTarget, profileDir, variant.libraryFileName)
+
+    if (!existsSync(src)) {
+      console.error(`Error: Expected native library ${src} was not produced by Cargo.`)
+      process.exit(1)
+    }
 
     rmSync(nativeDir, { recursive: true, force: true })
     mkdirSync(nativeDir, { recursive: true })
+    copyFileSync(src, join(nativeDir, variant.libraryFileName))
 
-    let copiedFiles = 0
-    let libraryFileName: string | null = null
-    for (const name of ["libopentui", "opentui"]) {
-      for (const ext of [".so", ".dll", ".dylib"]) {
-        const src = join(libDir, `${name}${ext}`)
-        if (existsSync(src)) {
-          const fileName = `${name}${ext}`
-          copyFileSync(src, join(nativeDir, fileName))
-          copiedFiles++
-          if (!libraryFileName) {
-            libraryFileName = fileName
-          }
-        }
-      }
-    }
-
-    if (copiedFiles === 0) {
-      // Skip platforms that weren't built
-      console.log(`Skipping ${platform}-${arch}: no libraries found`)
-      rmSync(nativeDir, { recursive: true, force: true })
-      continue
-    }
-
-    const indexTsContent = `const module = await import("./${libraryFileName}", { with: { type: "file" } })
+    const indexTsContent = `const module = await import("./${variant.libraryFileName}", { with: { type: "file" } })
 const path = module.default
 export default path;
 `
@@ -148,7 +238,7 @@ export default path;
         {
           name: nativeName,
           version: packageJson.version,
-          description: `Prebuilt ${platform}-${arch} binaries for ${packageJson.name}`,
+          description: `Prebuilt ${variant.platform}-${variant.arch} binaries for ${packageJson.name}`,
           main: "index.ts",
           types: "index.ts",
           license: packageJson.license,
@@ -157,8 +247,8 @@ export default path;
           repository: packageJson.repository,
           bugs: packageJson.bugs,
           keywords: [...(packageJson.keywords ?? []), "prebuild", "prebuilt"],
-          os: [platform],
-          cpu: [arch],
+          os: [variant.platform],
+          cpu: [variant.arch],
         },
         null,
         2,
@@ -167,7 +257,7 @@ export default path;
 
     writeFileSync(
       join(nativeDir, "README.md"),
-      replaceLinks(`## ${nativeName}\n\n> Prebuilt ${platform}-${arch} binaries for \`${packageJson.name}\`.`),
+      replaceLinks(`## ${nativeName}\n\n> Prebuilt ${variant.platform}-${variant.arch} binaries for \`${packageJson.name}\`.`),
     )
 
     if (existsSync(licensePath)) copyFileSync(licensePath, join(nativeDir, "LICENSE"))

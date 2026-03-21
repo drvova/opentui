@@ -1,4 +1,4 @@
-import { resolveRenderLib, type LogicalCursor, type RenderLib } from "./zig.js"
+import { resolveRenderLib, type LogicalCursor, type RenderLib } from "./native.js"
 import { type Pointer } from "bun:ffi"
 import { type WidthMethod, type Highlight } from "./types.js"
 import { RGBA } from "./lib/RGBA.js"
@@ -67,6 +67,38 @@ export class EditBuffer extends EventEmitter {
     if (this._destroyed) throw new Error("EditBuffer is destroyed")
   }
 
+  private withMutation<T>(
+    mutate: () => T,
+    options: { content?: boolean; cursor?: boolean } = { content: true, cursor: true },
+  ): T {
+    this.guard()
+    const trackContent = options.content ?? true
+    const trackCursor = options.cursor ?? true
+    const beforeText = trackContent ? this.getText() : null
+    const beforeCursor = trackCursor ? this.getCursorPosition() : null
+    const result = mutate()
+    const afterText = trackContent ? this.getText() : null
+    const afterCursor = trackCursor ? this.getCursorPosition() : null
+
+    if (trackContent && beforeText !== afterText) {
+      this.emit("content-changed")
+    }
+
+    const cursorChanged =
+      trackCursor &&
+      beforeCursor &&
+      afterCursor &&
+      (beforeCursor.row !== afterCursor.row ||
+        beforeCursor.col !== afterCursor.col ||
+        beforeCursor.offset !== afterCursor.offset)
+
+    if (cursorChanged || (trackCursor && trackContent && beforeText !== afterText)) {
+      this.emit("cursor-changed")
+    }
+
+    return result
+  }
+
   public get ptr(): Pointer {
     this.guard()
     return this.bufferPtr
@@ -77,16 +109,17 @@ export class EditBuffer extends EventEmitter {
    * Use this for initial text setting or when you want a clean slate.
    */
   public setText(text: string): void {
-    this.guard()
-    const textBytes = this.lib.encoder.encode(text)
+    this.withMutation(() => {
+      const textBytes = this.lib.encoder.encode(text)
 
-    if (this._singleTextMemId !== null) {
-      this.lib.textBufferReplaceMemBuffer(this.textBufferPtr, this._singleTextMemId, textBytes, false)
-    } else {
-      this._singleTextMemId = this.lib.textBufferRegisterMemBuffer(this.textBufferPtr, textBytes, false)
-    }
-    this._singleTextBytes = textBytes
-    this.lib.editBufferSetTextFromMem(this.bufferPtr, this._singleTextMemId)
+      if (this._singleTextMemId !== null) {
+        this.lib.textBufferReplaceMemBuffer(this.textBufferPtr, this._singleTextMemId, textBytes, false)
+      } else {
+        this._singleTextMemId = this.lib.textBufferRegisterMemBuffer(this.textBufferPtr, textBytes, false)
+      }
+      this._singleTextBytes = textBytes
+      this.lib.editBufferSetTextFromMem(this.bufferPtr, this._singleTextMemId)
+    })
   }
 
   /**
@@ -94,9 +127,10 @@ export class EditBuffer extends EventEmitter {
    * The native code takes ownership of the memory.
    */
   public setTextOwned(text: string): void {
-    this.guard()
-    const textBytes = this.lib.encoder.encode(text)
-    this.lib.editBufferSetText(this.bufferPtr, textBytes)
+    this.withMutation(() => {
+      const textBytes = this.lib.encoder.encode(text)
+      this.lib.editBufferSetText(this.bufferPtr, textBytes)
+    })
   }
 
   /**
@@ -104,11 +138,12 @@ export class EditBuffer extends EventEmitter {
    * Use this when you want the setText operation to be undoable.
    */
   public replaceText(text: string): void {
-    this.guard()
-    const textBytes = this.lib.encoder.encode(text)
-    this._textBytes.push(textBytes)
-    const memId = this.lib.textBufferRegisterMemBuffer(this.textBufferPtr, textBytes, false)
-    this.lib.editBufferReplaceTextFromMem(this.bufferPtr, memId)
+    this.withMutation(() => {
+      const textBytes = this.lib.encoder.encode(text)
+      this._textBytes.push(textBytes)
+      const memId = this.lib.textBufferRegisterMemBuffer(this.textBufferPtr, textBytes, false)
+      this.lib.editBufferReplaceTextFromMem(this.bufferPtr, memId)
+    })
   }
 
   /**
@@ -116,9 +151,10 @@ export class EditBuffer extends EventEmitter {
    * The native code takes ownership of the memory.
    */
   public replaceTextOwned(text: string): void {
-    this.guard()
-    const textBytes = this.lib.encoder.encode(text)
-    this.lib.editBufferReplaceText(this.bufferPtr, textBytes)
+    this.withMutation(() => {
+      const textBytes = this.lib.encoder.encode(text)
+      this.lib.editBufferReplaceText(this.bufferPtr, textBytes)
+    })
   }
 
   public getLineCount(): number {
@@ -139,78 +175,93 @@ export class EditBuffer extends EventEmitter {
   }
 
   public insertChar(char: string): void {
-    this.guard()
-    this.lib.editBufferInsertChar(this.bufferPtr, char)
+    this.withMutation(() => {
+      this.lib.editBufferInsertChar(this.bufferPtr, char)
+    })
   }
 
   public insertText(text: string): void {
-    this.guard()
-    this.lib.editBufferInsertText(this.bufferPtr, text)
+    this.withMutation(() => {
+      this.lib.editBufferInsertText(this.bufferPtr, text)
+    })
   }
 
   public deleteChar(): void {
-    this.guard()
-    this.lib.editBufferDeleteChar(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferDeleteChar(this.bufferPtr)
+    })
   }
 
   public deleteCharBackward(): void {
-    this.guard()
-    this.lib.editBufferDeleteCharBackward(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferDeleteCharBackward(this.bufferPtr)
+    })
   }
 
   public deleteRange(startLine: number, startCol: number, endLine: number, endCol: number): void {
-    this.guard()
-    this.lib.editBufferDeleteRange(this.bufferPtr, startLine, startCol, endLine, endCol)
+    this.withMutation(() => {
+      this.lib.editBufferDeleteRange(this.bufferPtr, startLine, startCol, endLine, endCol)
+    })
   }
 
   public newLine(): void {
-    this.guard()
-    this.lib.editBufferNewLine(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferNewLine(this.bufferPtr)
+    })
   }
 
   public deleteLine(): void {
-    this.guard()
-    this.lib.editBufferDeleteLine(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferDeleteLine(this.bufferPtr)
+    })
   }
 
   public moveCursorLeft(): void {
-    this.guard()
-    this.lib.editBufferMoveCursorLeft(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferMoveCursorLeft(this.bufferPtr)
+    }, { content: false, cursor: true })
   }
 
   public moveCursorRight(): void {
-    this.guard()
-    this.lib.editBufferMoveCursorRight(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferMoveCursorRight(this.bufferPtr)
+    }, { content: false, cursor: true })
   }
 
   public moveCursorUp(): void {
-    this.guard()
-    this.lib.editBufferMoveCursorUp(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferMoveCursorUp(this.bufferPtr)
+    }, { content: false, cursor: true })
   }
 
   public moveCursorDown(): void {
-    this.guard()
-    this.lib.editBufferMoveCursorDown(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferMoveCursorDown(this.bufferPtr)
+    }, { content: false, cursor: true })
   }
 
   public gotoLine(line: number): void {
-    this.guard()
-    this.lib.editBufferGotoLine(this.bufferPtr, line)
+    this.withMutation(() => {
+      this.lib.editBufferGotoLine(this.bufferPtr, line)
+    }, { content: false, cursor: true })
   }
 
   public setCursor(line: number, col: number): void {
-    this.guard()
-    this.lib.editBufferSetCursor(this.bufferPtr, line, col)
+    this.withMutation(() => {
+      this.lib.editBufferSetCursor(this.bufferPtr, line, col)
+    }, { content: false, cursor: true })
   }
 
   public setCursorToLineCol(line: number, col: number): void {
-    this.guard()
-    this.lib.editBufferSetCursorToLineCol(this.bufferPtr, line, col)
+    this.withMutation(() => {
+      this.lib.editBufferSetCursorToLineCol(this.bufferPtr, line, col)
+    }, { content: false, cursor: true })
   }
 
   public setCursorByOffset(offset: number): void {
-    this.guard()
-    this.lib.editBufferSetCursorByOffset(this.bufferPtr, offset)
+    this.withMutation(() => {
+      this.lib.editBufferSetCursorByOffset(this.bufferPtr, offset)
+    }, { content: false, cursor: true })
   }
 
   public getCursorPosition(): LogicalCursor {
@@ -305,19 +356,21 @@ export class EditBuffer extends EventEmitter {
   }
 
   public undo(): string | null {
-    this.guard()
-    const maxSize = 256
-    const metaBytes = this.lib.editBufferUndo(this.bufferPtr, maxSize)
-    if (!metaBytes) return null
-    return this.lib.decoder.decode(metaBytes)
+    return this.withMutation(() => {
+      const maxSize = 256
+      const metaBytes = this.lib.editBufferUndo(this.bufferPtr, maxSize)
+      if (!metaBytes) return null
+      return this.lib.decoder.decode(metaBytes)
+    })
   }
 
   public redo(): string | null {
-    this.guard()
-    const maxSize = 256
-    const metaBytes = this.lib.editBufferRedo(this.bufferPtr, maxSize)
-    if (!metaBytes) return null
-    return this.lib.decoder.decode(metaBytes)
+    return this.withMutation(() => {
+      const maxSize = 256
+      const metaBytes = this.lib.editBufferRedo(this.bufferPtr, maxSize)
+      if (!metaBytes) return null
+      return this.lib.decoder.decode(metaBytes)
+    })
   }
 
   public canUndo(): boolean {
@@ -397,8 +450,9 @@ export class EditBuffer extends EventEmitter {
   }
 
   public clear(): void {
-    this.guard()
-    this.lib.editBufferClear(this.bufferPtr)
+    this.withMutation(() => {
+      this.lib.editBufferClear(this.bufferPtr)
+    })
   }
 
   public destroy(): void {

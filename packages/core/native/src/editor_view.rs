@@ -271,7 +271,10 @@ impl EditorViewState {
             .get(usize::try_from(cursor.visual_row).unwrap_or(usize::MAX))
             .copied();
         let offset = line
-            .map(|line| line.start_offset.saturating_add(line.width_cols))
+            .map(|line| {
+                line.start_offset
+                    .saturating_add(line.width_cols.saturating_sub(1))
+            })
             .unwrap_or(cursor.offset);
         let logical = self
             .edit_buffer()

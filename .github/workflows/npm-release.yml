@@ -10,9 +10,37 @@ permissions:
   pull-requests: write
 
 jobs:
-  release:
-    runs-on: macos-latest
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version_scheme.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
+      - name: Extract version from tag
+        id: extract_version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          echo "version=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate snapshot version
+        id: version_scheme
+        run: |
+          COMMIT_SHA=$(git rev-parse --short=8 HEAD)
+          VERSION="0.0.0-$(date +%Y%m%d)-${COMMIT_SHA}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  build-native:
+    needs: [prepare]
+    uses: ./.github/workflows/build-native.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+
+  publish:
+    needs: [prepare, build-native]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,51 +51,27 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
-
-      - name: Extract version from tag
-        id: extract_version
-        run: |
-          TAG=${GITHUB_REF#refs/tags/v}
-          echo "version=$TAG" >> $GITHUB_OUTPUT
-          echo "Extracted version: $TAG"
-
-      - name: Generate snapshot version
-        id: version_scheme
-        run: |
-          TAG_VERSION="${{ steps.extract_version.outputs.version }}"
-          COMMIT_SHA=$(git rev-parse --short=8 HEAD)
-
-          # Pre-release snapshot
-          VERSION="0.0.0-$(date +%Y%m%d)-${COMMIT_SHA}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Using snapshot version: $VERSION"
-
       - name: Install dependencies
-        run: bun i
-
-      - name: Check Rust native foundation
-        run: |
-          cd packages/core
-          bun run native:abi:check
-          bun run native:rust:test
+        run: bun install
 
       - name: Prepare release versions
-        run: bun run prepare-release "${{ steps.version_scheme.outputs.version }}"
+        run: bun run prepare-release "${{ needs.prepare.outputs.version }}"
 
-      - name: Build packages (cross-compile for all platforms)
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-${{ needs.prepare.outputs.version }}
+          path: artifacts
+
+      - name: Restore build outputs
         run: |
-          cd packages/core
-          bun run build:native --all
-          bun run build:lib
-          cd ../solid && bun run build
-          cd ../react && bun run build
+          unzip -q artifacts/npm-packages.zip -d artifacts
+          rm -rf packages/core/dist packages/react/dist packages/solid/dist packages/core/node_modules/@opentui
+          cp -r artifacts/npm-packages/core-dist packages/core/dist
+          cp -r artifacts/npm-packages/react-dist packages/react/dist
+          cp -r artifacts/npm-packages/solid-dist packages/solid/dist
+          mkdir -p packages/core/node_modules
+          cp -r artifacts/npm-packages/core-native-packages packages/core/node_modules/@opentui
 
       - name: Publish packages
         run: bun run publish

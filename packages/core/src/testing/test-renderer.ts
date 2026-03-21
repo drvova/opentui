@@ -1,6 +1,6 @@
 import { Readable } from "stream"
 import { CliRenderer, type CliRendererConfig } from "../renderer.js"
-import { resolveRenderLib } from "../zig.js"
+import { resolveRenderLib } from "../native.js"
 import { createMockKeys } from "./mock-keys.js"
 import { createMockMouse } from "./mock-mouse.js"
 import type { CapturedFrame } from "../types.js"
@@ -88,8 +88,8 @@ async function setupTestRenderer(config: TestRendererOptions) {
   const renderHeight =
     config.experimental_splitHeight && config.experimental_splitHeight > 0 ? config.experimental_splitHeight : height
 
-  const ziglib = resolveRenderLib()
-  const rendererPtr = ziglib.createRenderer(width, renderHeight, {
+  const nativeLib = resolveRenderLib()
+  const rendererPtr = nativeLib.createRenderer(width, renderHeight, {
     testing: true,
     remote: config.remote ?? false,
   })
@@ -103,9 +103,9 @@ async function setupTestRenderer(config: TestRendererOptions) {
   if (process.platform === "linux") {
     config.useThread = false
   }
-  ziglib.setUseThread(rendererPtr, config.useThread)
+  nativeLib.setUseThread(rendererPtr, config.useThread)
 
-  const renderer = new CliRenderer(ziglib, rendererPtr, stdin, stdout, width, height, config)
+  const renderer = new CliRenderer(nativeLib, rendererPtr, stdin, stdout, width, height, config)
 
   process.off("SIGWINCH", renderer["sigwinchHandler"])
 

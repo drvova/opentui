@@ -1,5 +1,5 @@
 import { RGBA } from "./lib/RGBA.js"
-import { resolveRenderLib, type LineInfo, type RenderLib } from "./zig.js"
+import { resolveRenderLib, type LineInfo, type RenderLib } from "./native.js"
 import { type Pointer } from "bun:ffi"
 import type { TextBuffer } from "./text-buffer.js"
 

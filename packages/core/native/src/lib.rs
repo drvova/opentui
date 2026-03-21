@@ -1,6 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use core::ffi::{c_char, c_uint};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 mod edit_buffer;
 mod editor_view;
@@ -37,17 +42,69 @@ pub type NativeRenderer = renderer_state::RendererState;
 use edit_buffer::EditBufferState;
 use editor_view::EditorViewState;
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
-use optimized_buffer::OptimizedBuffer;
+use optimized_buffer::{
+    BorderSides as BufferBorderSides, GridDrawOptions as BufferGridDrawOptions, OptimizedBuffer,
+};
 use renderer_state::RendererState;
 use syntax_style::{Rgba, SyntaxStyleState};
 use terminal_state::CursorStyleOptions as TerminalCursorStyleOptions;
 use text_buffer::{TextBufferState, copy_bytes_to_out};
 use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeBuildOptions {
+    pub gpa_safe_stats: bool,
+    pub gpa_memory_limit_tracking: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeAllocatorStats {
+    pub total_requested_bytes: u64,
+    pub active_allocations: u64,
+    pub small_allocations: u64,
+    pub large_allocations: u64,
+    pub requested_bytes_valid: bool,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeEncodedChar {
+    pub width: u8,
+    pub char: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeGridDrawOptions {
+    pub draw_inner: bool,
+    pub draw_outer: bool,
+}
+
 const ABI_SYMBOL_COUNT: c_uint = parse_symbol_count();
 const ABI_HASH_CSTR: &[u8] = concat!(env!("OPENTUI_ABI_SYMBOL_HASH"), "\0").as_bytes();
 const BUILD_PROFILE_CSTR: &[u8] = concat!(env!("OPENTUI_BUILD_PROFILE"), "\0").as_bytes();
 const CRATE_VERSION_CSTR: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
+static NEXT_LINK_ID: AtomicU32 = AtomicU32::new(1);
+static NEXT_GRAPHEME_ID: AtomicU32 = AtomicU32::new(1);
+static LINK_REGISTRY: OnceLock<Mutex<HashMap<u32, Vec<u8>>>> = OnceLock::new();
+static GRAPHEME_REGISTRY: OnceLock<Mutex<HashMap<u32, GraphemeEntry>>> = OnceLock::new();
+static LOG_CALLBACK: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
+static EVENT_CALLBACK: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
+
+const CHAR_FLAG_GRAPHEME: u32 = 0x8000_0000;
+const CHAR_FLAG_CONTINUATION: u32 = 0xC000_0000;
+const CHAR_EXT_RIGHT_SHIFT: u32 = 28;
+const CHAR_EXT_LEFT_SHIFT: u32 = 26;
+const CHAR_EXT_MASK: u32 = 0x3;
+const GRAPHEME_ID_MASK: u32 = 0x03FF_FFFF;
+
+#[derive(Clone, Debug)]
+struct GraphemeEntry {
+    bytes: Vec<u8>,
+    refs: u32,
+}
 
 #[repr(C)]
 pub struct OpentuiRustFoundationAbiInfo {
@@ -80,8 +137,200 @@ const fn static_cstr(bytes: &'static [u8]) -> *const c_char {
 }
 
 fn color_from_ptr(ptr: *const f32) -> Rgba {
-    let color = unsafe { std::slice::from_raw_parts(ptr, 4) };
-    [color[0], color[1], color[2], color[3]]
+    unsafe { std::ptr::read_unaligned(ptr.cast::<Rgba>()) }
+}
+
+fn link_registry() -> &'static Mutex<HashMap<u32, Vec<u8>>> {
+    LINK_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn grapheme_registry() -> &'static Mutex<HashMap<u32, GraphemeEntry>> {
+    GRAPHEME_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn is_grapheme_char(value: u32) -> bool {
+    (value & 0xC000_0000) == CHAR_FLAG_GRAPHEME
+}
+
+pub(crate) fn is_continuation_char(value: u32) -> bool {
+    (value & 0xC000_0000) == CHAR_FLAG_CONTINUATION
+}
+
+pub(crate) fn grapheme_id_from_char(value: u32) -> u32 {
+    value & GRAPHEME_ID_MASK
+}
+
+pub(crate) fn char_right_extent(value: u32) -> u32 {
+    (value >> CHAR_EXT_RIGHT_SHIFT) & CHAR_EXT_MASK
+}
+
+pub(crate) fn char_left_extent(value: u32) -> u32 {
+    (value >> CHAR_EXT_LEFT_SHIFT) & CHAR_EXT_MASK
+}
+
+pub(crate) fn encoded_char_width(value: u32) -> u32 {
+    if is_continuation_char(value) {
+        char_left_extent(value) + char_right_extent(value) + 1
+    } else if is_grapheme_char(value) {
+        char_right_extent(value) + 1
+    } else {
+        1
+    }
+}
+
+pub(crate) fn pack_grapheme_start(gid: u32, total_width: u32) -> u32 {
+    let width_minus_one = total_width.saturating_sub(1).min(3);
+    CHAR_FLAG_GRAPHEME
+        | ((width_minus_one & CHAR_EXT_MASK) << CHAR_EXT_RIGHT_SHIFT)
+        | (gid & GRAPHEME_ID_MASK)
+}
+
+pub(crate) fn pack_continuation(left: u32, right: u32, gid: u32) -> u32 {
+    CHAR_FLAG_CONTINUATION
+        | ((left.min(3) & CHAR_EXT_MASK) << CHAR_EXT_LEFT_SHIFT)
+        | ((right.min(3) & CHAR_EXT_MASK) << CHAR_EXT_RIGHT_SHIFT)
+        | (gid & GRAPHEME_ID_MASK)
+}
+
+pub(crate) fn alloc_grapheme_bytes(bytes: &[u8]) -> u32 {
+    let mut registry = grapheme_registry().lock().unwrap();
+    if let Some((&id, entry)) = registry.iter_mut().find(|(_, entry)| entry.bytes == bytes) {
+        entry.refs = entry.refs.saturating_add(1);
+        return id;
+    }
+
+    let id = NEXT_GRAPHEME_ID.fetch_add(1, Ordering::Relaxed) & GRAPHEME_ID_MASK;
+    registry.insert(
+        id,
+        GraphemeEntry {
+            bytes: bytes.to_vec(),
+            refs: 1,
+        },
+    );
+    id
+}
+
+pub(crate) fn retain_grapheme_id(id: u32) -> bool {
+    let mut registry = grapheme_registry().lock().unwrap();
+    let Some(entry) = registry.get_mut(&id) else {
+        return false;
+    };
+    entry.refs = entry.refs.saturating_add(1);
+    true
+}
+
+pub(crate) fn release_grapheme_id(id: u32) {
+    let mut registry = grapheme_registry().lock().unwrap();
+    let Some(entry) = registry.get_mut(&id) else {
+        return;
+    };
+    if entry.refs <= 1 {
+        registry.remove(&id);
+        return;
+    }
+    entry.refs -= 1;
+}
+
+pub(crate) fn grapheme_bytes(id: u32) -> Option<Vec<u8>> {
+    grapheme_registry()
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|entry| entry.bytes.clone())
+}
+
+fn log_callback() -> &'static Mutex<Option<usize>> {
+    LOG_CALLBACK.get_or_init(|| Mutex::new(None))
+}
+
+fn event_callback() -> &'static Mutex<Option<usize>> {
+    EVENT_CALLBACK.get_or_init(|| Mutex::new(None))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn linkAlloc(url_ptr: *const u8, url_len: usize) -> u32 {
+    if url_ptr.is_null() {
+        return 0;
+    }
+    let url = unsafe { std::slice::from_raw_parts(url_ptr, url_len) };
+    let id = NEXT_LINK_ID.fetch_add(1, Ordering::Relaxed);
+    link_registry().lock().unwrap().insert(id, url.to_vec());
+    id
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn linkGetUrl(link_id: u32, out_ptr: *mut u8, max_len: usize) -> usize {
+    let registry = link_registry().lock().unwrap();
+    let Some(url) = registry.get(&link_id) else {
+        return 0;
+    };
+    copy_bytes_to_out(url, out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn attributesWithLink(base_attributes: u32, link_id: u32) -> u32 {
+    (link_id << 8) | (base_attributes & 0xff)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn attributesGetLinkId(attributes: u32) -> u32 {
+    attributes >> 8
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn encodeUnicode(
+    text_ptr: *const u8,
+    text_len: usize,
+    out_ptr_ptr: *mut u64,
+    out_len_ptr: *mut u64,
+    _width_method: u8,
+) -> bool {
+    if text_ptr.is_null() || out_ptr_ptr.is_null() || out_len_ptr.is_null() {
+        return false;
+    }
+    let text = unsafe { std::slice::from_raw_parts(text_ptr, text_len) };
+    let text = std::str::from_utf8(text).unwrap_or("");
+
+    let data: Vec<NativeEncodedChar> = text
+        .graphemes(true)
+        .map(|grapheme| {
+            let width = UnicodeWidthStr::width(grapheme).min(255) as u8;
+            let scalar_count = grapheme.chars().count();
+            let char = if scalar_count == 1 && width <= 1 {
+                grapheme.chars().next().map(u32::from).unwrap_or_default()
+            } else {
+                pack_grapheme_start(
+                    alloc_grapheme_bytes(grapheme.as_bytes()),
+                    u32::from(width.max(1)),
+                )
+            };
+            NativeEncodedChar { width, char }
+        })
+        .collect();
+    let boxed = data.into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    let len = boxed.len();
+    std::mem::forget(boxed);
+    unsafe {
+        *out_ptr_ptr = ptr as usize as u64;
+        *out_len_ptr = len as u64;
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn freeUnicode(ptr: *const NativeEncodedChar, len: usize) {
+    if ptr.is_null() || len == 0 {
+        return;
+    }
+    unsafe {
+        let data = Vec::from_raw_parts(ptr as *mut NativeEncodedChar, len, len);
+        for encoded in &data {
+            if is_grapheme_char(encoded.char) {
+                release_grapheme_id(grapheme_id_from_char(encoded.char));
+            }
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -582,6 +831,50 @@ pub extern "C" fn opentui_rust_foundation_abi_info(out: *mut OpentuiRustFoundati
     }
 
     true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setLogCallback(callback_ptr: *const core::ffi::c_void) {
+    *log_callback().lock().unwrap() = (!callback_ptr.is_null()).then_some(callback_ptr as usize);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn setEventCallback(callback_ptr: *const core::ffi::c_void) {
+    *event_callback().lock().unwrap() = (!callback_ptr.is_null()).then_some(callback_ptr as usize);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getArenaAllocatedBytes() -> usize {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getBuildOptions(out_ptr: *mut NativeBuildOptions) {
+    if out_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        *out_ptr = NativeBuildOptions {
+            gpa_safe_stats: false,
+            gpa_memory_limit_tracking: false,
+        };
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getAllocatorStats(out_ptr: *mut NativeAllocatorStats) {
+    if out_ptr.is_null() {
+        return;
+    }
+    unsafe {
+        *out_ptr = NativeAllocatorStats {
+            total_requested_bytes: 0,
+            active_allocations: 0,
+            small_allocations: 0,
+            large_allocations: 0,
+            requested_bytes_valid: false,
+        };
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -2150,8 +2443,8 @@ pub extern "C" fn createOptimizedBuffer(
     height: u32,
     respect_alpha: bool,
     _width_method: u8,
-    _id_ptr: *const u8,
-    _id_len: usize,
+    id_ptr: *const u8,
+    id_len: usize,
 ) -> *mut NativeOptimizedBuffer {
     if width == 0 || height == 0 {
         return core::ptr::null_mut();
@@ -2163,7 +2456,18 @@ pub extern "C" fn createOptimizedBuffer(
         return core::ptr::null_mut();
     };
 
-    Box::into_raw(Box::new(OptimizedBuffer::new(width, height, respect_alpha)))
+    let id = if id_ptr.is_null() || id_len == 0 {
+        b"unnamed".to_vec()
+    } else {
+        unsafe { std::slice::from_raw_parts(id_ptr, id_len) }.to_vec()
+    };
+
+    Box::into_raw(Box::new(OptimizedBuffer::with_id(
+        width,
+        height,
+        respect_alpha,
+        id,
+    )))
 }
 
 #[unsafe(no_mangle)]
@@ -2250,6 +2554,551 @@ pub extern "C" fn bufferClear(buffer: *mut NativeOptimizedBuffer, bg: *const f32
         color_from_ptr(bg)
     };
     buffer.clear_with_bg(bg);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetRespectAlpha(buffer: *const NativeOptimizedBuffer) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+    let buffer = unsafe { &*buffer };
+    buffer.respect_alpha()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferSetRespectAlpha(buffer: *mut NativeOptimizedBuffer, respect_alpha: bool) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.set_respect_alpha(respect_alpha);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetId(
+    buffer: *const NativeOptimizedBuffer,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if buffer.is_null() {
+        return 0;
+    }
+    let buffer = unsafe { &*buffer };
+    copy_bytes_to_out(buffer.id_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetRealCharSize(buffer: *const NativeOptimizedBuffer) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+    let buffer = unsafe { &*buffer };
+    u32::try_from(buffer.real_char_size()).unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferWriteResolvedChars(
+    buffer: *const NativeOptimizedBuffer,
+    output_ptr: *mut u8,
+    output_len: usize,
+    add_line_breaks: bool,
+) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+    let buffer = unsafe { &*buffer };
+    let bytes = buffer.write_resolved_chars_to_vec(add_line_breaks);
+    u32::try_from(copy_bytes_to_out(&bytes, output_ptr, output_len)).unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferSetCell(
+    buffer: *mut NativeOptimizedBuffer,
+    x: u32,
+    y: u32,
+    char_code: u32,
+    fg: *const f32,
+    bg: *const f32,
+    attributes: u32,
+) {
+    if buffer.is_null() || fg.is_null() || bg.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.draw_char(
+        char_code,
+        x as usize,
+        y as usize,
+        color_from_ptr(fg),
+        color_from_ptr(bg),
+        attributes,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferSetCellWithAlphaBlending(
+    buffer: *mut NativeOptimizedBuffer,
+    x: u32,
+    y: u32,
+    char_code: u32,
+    fg: *const f32,
+    bg: *const f32,
+    attributes: u32,
+) {
+    if buffer.is_null() || fg.is_null() || bg.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.set_cell_with_alpha_blending(
+        x as usize,
+        y as usize,
+        char_code,
+        color_from_ptr(fg),
+        color_from_ptr(bg),
+        attributes,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferFillRect(
+    buffer: *mut NativeOptimizedBuffer,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    bg: *const f32,
+) {
+    if buffer.is_null() || bg.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.fill_rect(
+        x as usize,
+        y as usize,
+        width as usize,
+        height as usize,
+        color_from_ptr(bg),
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawText(
+    buffer: *mut NativeOptimizedBuffer,
+    text_ptr: *const u8,
+    text_len: usize,
+    x: u32,
+    y: u32,
+    fg: *const f32,
+    bg: *const f32,
+    attributes: u32,
+) {
+    if buffer.is_null() || text_ptr.is_null() || fg.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let text = unsafe { std::slice::from_raw_parts(text_ptr, text_len) };
+    let text = std::str::from_utf8(text).unwrap_or("");
+    let bg = if bg.is_null() {
+        [0.0, 0.0, 0.0, 1.0]
+    } else {
+        color_from_ptr(bg)
+    };
+    let _ = buffer.draw_text(
+        x as usize,
+        y as usize,
+        text,
+        color_from_ptr(fg),
+        bg,
+        attributes,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawChar(
+    buffer: *mut NativeOptimizedBuffer,
+    char_code: u32,
+    x: u32,
+    y: u32,
+    fg: *const f32,
+    bg: *const f32,
+    attributes: u32,
+) {
+    if buffer.is_null() || fg.is_null() || bg.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.draw_char(
+        char_code,
+        x as usize,
+        y as usize,
+        color_from_ptr(fg),
+        color_from_ptr(bg),
+        attributes,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferResize(buffer: *mut NativeOptimizedBuffer, width: u32, height: u32) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.resize(width as usize, height as usize);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferPushOpacity(buffer: *mut NativeOptimizedBuffer, opacity: f32) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.push_opacity(opacity);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferPopOpacity(buffer: *mut NativeOptimizedBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.pop_opacity();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetCurrentOpacity(buffer: *const NativeOptimizedBuffer) -> f32 {
+    if buffer.is_null() {
+        return 1.0;
+    }
+    let buffer = unsafe { &*buffer };
+    buffer.current_opacity()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferClearOpacity(buffer: *mut NativeOptimizedBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.clear_opacity();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferPushScissorRect(
+    buffer: *mut NativeOptimizedBuffer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.push_scissor_rect(x, y, width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferPopScissorRect(buffer: *mut NativeOptimizedBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.pop_scissor_rect();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferClearScissorRects(buffer: *mut NativeOptimizedBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    buffer.clear_scissor_rects();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn drawFrameBuffer(
+    target: *mut NativeOptimizedBuffer,
+    dest_x: i32,
+    dest_y: i32,
+    source: *mut NativeOptimizedBuffer,
+    _src_x: u32,
+    _src_y: u32,
+    _src_width: u32,
+    _src_height: u32,
+) {
+    if target.is_null() || source.is_null() {
+        return;
+    }
+    let target = unsafe { &mut *target };
+    let source = unsafe { &*source };
+    target.draw_frame_buffer(dest_x, dest_y, source);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawGrid(
+    buffer: *mut NativeOptimizedBuffer,
+    border_chars: *const u32,
+    fg: *const f32,
+    bg: *const f32,
+    column_offsets: *const i32,
+    column_count: usize,
+    row_offsets: *const i32,
+    row_count: usize,
+    options_ptr: *const NativeGridDrawOptions,
+) {
+    if buffer.is_null()
+        || border_chars.is_null()
+        || fg.is_null()
+        || bg.is_null()
+        || column_offsets.is_null()
+        || row_offsets.is_null()
+    {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let chars = unsafe { std::slice::from_raw_parts(border_chars, 11) };
+    let cols = unsafe { std::slice::from_raw_parts(column_offsets, column_count + 1) };
+    let rows = unsafe { std::slice::from_raw_parts(row_offsets, row_count + 1) };
+    let options = unsafe { options_ptr.as_ref() }
+        .copied()
+        .map(|options| BufferGridDrawOptions {
+            draw_inner: options.draw_inner,
+            draw_outer: options.draw_outer,
+        })
+        .unwrap_or(BufferGridDrawOptions {
+            draw_inner: true,
+            draw_outer: true,
+        });
+
+    buffer.draw_grid(
+        cols,
+        rows,
+        chars,
+        color_from_ptr(fg),
+        color_from_ptr(bg),
+        options,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawBox(
+    buffer: *mut NativeOptimizedBuffer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    border_chars: *const u32,
+    packed_options: u32,
+    border_color: *const f32,
+    background_color: *const f32,
+    title_ptr: *const u8,
+    title_len: u32,
+) {
+    if buffer.is_null()
+        || border_chars.is_null()
+        || border_color.is_null()
+        || background_color.is_null()
+    {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let chars = unsafe { std::slice::from_raw_parts(border_chars, 11) };
+    let border_sides = BufferBorderSides {
+        top: (packed_options & 0b1000) != 0,
+        right: (packed_options & 0b0100) != 0,
+        bottom: (packed_options & 0b0010) != 0,
+        left: (packed_options & 0b0001) != 0,
+    };
+    let should_fill = ((packed_options >> 4) & 1) != 0;
+    let title_alignment = ((packed_options >> 5) & 0b11) as u8;
+    let title = if title_ptr.is_null() || title_len == 0 {
+        None
+    } else {
+        Some(
+            std::str::from_utf8(unsafe {
+                std::slice::from_raw_parts(title_ptr, title_len as usize)
+            })
+            .unwrap_or(""),
+        )
+    };
+    buffer.draw_box(
+        x,
+        y,
+        width,
+        height,
+        chars,
+        border_sides,
+        color_from_ptr(border_color),
+        color_from_ptr(background_color),
+        should_fill,
+        title,
+        title_alignment,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferColorMatrix(
+    buffer: *mut NativeOptimizedBuffer,
+    matrix_ptr: *const f32,
+    cell_mask_ptr: *const f32,
+    cell_mask_count: usize,
+    strength: f32,
+    target: u8,
+) {
+    if buffer.is_null() || matrix_ptr.is_null() || cell_mask_ptr.is_null() || cell_mask_count == 0 {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let matrix = unsafe { &*(matrix_ptr as *const [f32; 16]) };
+    let cell_mask = unsafe { std::slice::from_raw_parts(cell_mask_ptr, cell_mask_count * 3) };
+    buffer.color_matrix(matrix, cell_mask, strength, target);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferColorMatrixUniform(
+    buffer: *mut NativeOptimizedBuffer,
+    matrix_ptr: *const f32,
+    strength: f32,
+    target: u8,
+) {
+    if buffer.is_null() || matrix_ptr.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let matrix = unsafe { &*(matrix_ptr as *const [f32; 16]) };
+    buffer.color_matrix_uniform(matrix, strength, target);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawPackedBuffer(
+    buffer: *mut NativeOptimizedBuffer,
+    data_ptr: *const u8,
+    data_len: usize,
+    pos_x: u32,
+    pos_y: u32,
+    terminal_width_cells: u32,
+    terminal_height_cells: u32,
+) {
+    if buffer.is_null() || data_ptr.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    buffer.draw_packed_buffer(
+        data,
+        pos_x,
+        pos_y,
+        terminal_width_cells,
+        terminal_height_cells,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawSuperSampleBuffer(
+    buffer: *mut NativeOptimizedBuffer,
+    x: u32,
+    y: u32,
+    pixel_ptr: *const u8,
+    pixel_len: usize,
+    format: u8,
+    aligned_bytes_per_row: u32,
+) {
+    if buffer.is_null() || pixel_ptr.is_null() {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let pixel_data = unsafe { std::slice::from_raw_parts(pixel_ptr, pixel_len) };
+    buffer.draw_super_sample_buffer(
+        x as usize,
+        y as usize,
+        pixel_data,
+        format,
+        aligned_bytes_per_row as usize,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawGrayscaleBuffer(
+    buffer: *mut NativeOptimizedBuffer,
+    pos_x: i32,
+    pos_y: i32,
+    intensities_ptr: *const f32,
+    src_width: u32,
+    src_height: u32,
+    fg: *const f32,
+    bg: *const f32,
+) {
+    if buffer.is_null() || intensities_ptr.is_null() || pos_x < 0 || pos_y < 0 {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let intensities = unsafe {
+        std::slice::from_raw_parts(
+            intensities_ptr,
+            (src_width as usize) * (src_height as usize),
+        )
+    };
+    let fg = if fg.is_null() {
+        [1.0; 4]
+    } else {
+        color_from_ptr(fg)
+    };
+    let bg = if bg.is_null() {
+        [0.0, 0.0, 0.0, 1.0]
+    } else {
+        color_from_ptr(bg)
+    };
+    buffer.draw_grayscale(
+        pos_x as usize,
+        pos_y as usize,
+        intensities,
+        src_width as usize,
+        src_height as usize,
+        fg,
+        bg,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawGrayscaleBufferSupersampled(
+    buffer: *mut NativeOptimizedBuffer,
+    pos_x: i32,
+    pos_y: i32,
+    intensities_ptr: *const f32,
+    src_width: u32,
+    src_height: u32,
+    fg: *const f32,
+    bg: *const f32,
+) {
+    if buffer.is_null() || intensities_ptr.is_null() || pos_x < 0 || pos_y < 0 {
+        return;
+    }
+    let buffer = unsafe { &mut *buffer };
+    let intensities = unsafe {
+        std::slice::from_raw_parts(
+            intensities_ptr,
+            (src_width as usize) * (src_height as usize),
+        )
+    };
+    let fg = if fg.is_null() {
+        [1.0; 4]
+    } else {
+        color_from_ptr(fg)
+    };
+    let bg = if bg.is_null() {
+        [0.0, 0.0, 0.0, 1.0]
+    } else {
+        color_from_ptr(bg)
+    };
+    buffer.draw_grayscale_supersampled(
+        pos_x as usize,
+        pos_y as usize,
+        intensities,
+        src_width as usize,
+        src_height as usize,
+        fg,
+        bg,
+    );
 }
 
 #[unsafe(no_mangle)]

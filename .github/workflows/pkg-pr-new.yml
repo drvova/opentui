@@ -7,8 +7,20 @@ on:
 permissions: {}
 
 jobs:
+  build-native:
+    if: |
+      github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
+      (contains(github.event.comment.body, ' /pkg-preview') ||
+        startsWith(github.event.comment.body, '/pkg-preview')) &&
+      contains(fromJson('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    uses: ./.github/workflows/build-native.yml
+    with:
+      version: preview-pr-${{ github.event.issue.number }}
+
   publish:
     name: Publish Preview
+    needs: [build-native]
     if: |
       github.event.issue.pull_request &&
       github.event.issue.state == 'open' &&
@@ -27,37 +39,31 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.15.2
-
       - name: Install dependencies
         run: bun install
 
-      - name: Build core (all platforms via cross-compilation)
-        run: bun scripts/build.ts --native --all && bun scripts/build.ts --lib
-        working-directory: packages/core
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-packages-preview-pr-${{ github.event.issue.number }}
+          path: artifacts
 
-      - name: Get native package directories
-        id: native-packages
+      - name: Restore build outputs
         run: |
-          NATIVE_DIRS=$(find ./packages/core/node_modules/@opentui -maxdepth 1 -type d -name 'core-*' -printf '%p ' | sed 's/ $//')
-          echo "dirs=$NATIVE_DIRS" >> $GITHUB_OUTPUT
-          echo "Found native packages: $NATIVE_DIRS"
-
-      - name: Build react
-        run: bun run build --ci
-        working-directory: packages/react
-
-      - name: Build solid
-        run: bun run build --ci
-        working-directory: packages/solid
+          unzip -q artifacts/npm-packages.zip -d artifacts
+          rm -rf packages/core/dist packages/react/dist packages/solid/dist packages/core/node_modules/@opentui
+          cp -r artifacts/npm-packages/core-dist packages/core/dist
+          cp -r artifacts/npm-packages/react-dist packages/react/dist
+          cp -r artifacts/npm-packages/solid-dist packages/solid/dist
+          mkdir -p packages/core/node_modules
+          cp -r artifacts/npm-packages/core-native-packages packages/core/node_modules/@opentui
 
       - name: Publish preview packages
         run: |
+          find ./packages/core/node_modules/@opentui -maxdepth 1 -type d -name 'core-*' -print > /tmp/native-dirs.txt
+          NATIVE_DIRS=$(tr '\n' ' ' < /tmp/native-dirs.txt)
           npx pkg-pr-new publish --no-template --commentWithSha --bun \
             './packages/core/dist' \
-            ${{ steps.native-packages.outputs.dirs }} \
+            $NATIVE_DIRS \
             './packages/react/dist' \
             './packages/solid/dist'

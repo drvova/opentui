@@ -4,28 +4,18 @@
 
 ### Build
 
-The benchmark library (`libnative_span_feed_bench`) is built by the Zig bench-ffi step
-with `ReleaseFast` by default. Override with `-Dbench-optimize=` if needed.
+Build the Rust native runtime and the TypeScript package first so the benchmark harness loads the current platform library.
 
 ```bash
-cd packages/core/src/zig
-zig build bench-ffi
+cd packages/core
+bun run build
 ```
-
-This installs `zig-out/lib/libnative_span_feed_bench.*`, which
-`src/benchmark/native-span-feed-benchmark.ts` loads by default.
-
-You can also run `zig build bench` to build the bench runner and install the FFI bench library in one step.
 
 ### Run
 
 ```bash
 cd packages/core
-zig build bench-ffi
-```
-
-```bash
-bun bench:ts
+bun run bench:native
 ```
 
 ```bash
@@ -37,7 +27,7 @@ bun src/benchmark/native-span-feed-benchmark.ts --bytes=100000 --iters=1000 --ch
 Defaults are optimized (batch drain + reserve path + chunk release flags) with no
 additional flags required.
 
-- `--bytes=<n>` total bytes produced by Zig per iteration (default: 100000)
+- `--bytes=<n>` total bytes produced by the native runtime per iteration (default: 100000)
 - `--iters=<n>` base iteration count (suite scenarios scale from this; defaults are optimized)
 - `--suite=<quick|default|large|all>` run a scenario suite
 - `--chunk=<n>` chunk size in bytes

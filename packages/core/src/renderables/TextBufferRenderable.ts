@@ -6,7 +6,7 @@ import { RGBA, parseColor } from "../lib/RGBA.js"
 import { type RenderContext, type LineInfoProvider } from "../types.js"
 import type { OptimizedBuffer } from "../buffer.js"
 import { MeasureMode } from "yoga-layout"
-import type { LineInfo } from "../zig.js"
+import type { LineInfo } from "../native.js"
 import { SyntaxStyle } from "../syntax-style.js"
 
 export interface TextBufferOptions extends RenderableOptions<TextBufferRenderable> {

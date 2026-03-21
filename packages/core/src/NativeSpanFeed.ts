@@ -1,9 +1,9 @@
 import { toArrayBuffer, type Pointer } from "bun:ffi"
-import { resolveRenderLib } from "./zig"
-import { SpanInfoStruct } from "./zig-structs"
-import type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs"
+import { resolveRenderLib } from "./native"
+import { SpanInfoStruct } from "./native-structs"
+import type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./native-structs"
 
-export type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./zig-structs"
+export type { GrowthPolicy, NativeSpanFeedOptions, NativeSpanFeedStats } from "./native-structs"
 
 const enum EventId {
   ChunkAdded = 2,

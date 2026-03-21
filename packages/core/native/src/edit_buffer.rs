@@ -116,6 +116,21 @@ impl EditBufferState {
             col,
         ) {
             self.cursor_offset = offset;
+            return;
+        }
+
+        let max_col = line_width_at(
+            self.text_buffer.text_str(),
+            self.text_buffer.tab_width(),
+            row,
+        );
+        if let Some(offset) = position_to_offset(
+            self.text_buffer.text_str(),
+            self.text_buffer.tab_width(),
+            row,
+            col.min(max_col),
+        ) {
+            self.cursor_offset = offset;
         }
     }
 
@@ -466,7 +481,7 @@ impl EditBufferState {
 }
 
 fn word_boundary(text: &str, offset: u32, tab_width: u8, forward: bool) -> u32 {
-    let chars: Vec<(u32, char)> = text
+    let chars: Vec<(u32, u32, char)> = text
         .char_indices()
         .scan(0_u32, |weight, (byte_index, ch)| {
             let current = *weight;
@@ -477,37 +492,63 @@ fn word_boundary(text: &str, offset: u32, tab_width: u8, forward: bool) -> u32 {
                 _ => ch.width().unwrap_or(0) as u32,
             };
             *weight = weight.saturating_add(char_weight);
-            Some((current, byte_index, ch))
+            Some((current, *weight, byte_index, ch))
         })
-        .map(|(current, _byte, ch)| (current, ch))
+        .map(|(current, next, _byte, ch)| (current, next, ch))
         .collect();
 
     if forward {
-        let mut seen_non_space = false;
-        for (char_offset, ch) in chars {
-            if char_offset < offset {
-                continue;
+        let mut index = match chars.iter().position(|(_, end, _)| *end > offset) {
+            Some(index) => index,
+            None => return text_weight(text, tab_width),
+        };
+
+        if chars[index].2.is_whitespace() {
+            while index < chars.len() && chars[index].2.is_whitespace() {
+                index += 1;
             }
-            if ch.is_whitespace() {
-                if seen_non_space {
-                    return char_offset;
-                }
-            } else {
-                seen_non_space = true;
+            return chars
+                .get(index)
+                .map(|(start, _, _)| *start)
+                .unwrap_or_else(|| text_weight(text, tab_width));
+        }
+
+        while index < chars.len() && !chars[index].2.is_whitespace() {
+            index += 1;
+        }
+        while index < chars.len() && matches!(chars[index].2, ' ' | '\t' | '\r') {
+            index += 1;
+        }
+        if let Some((start, _, ch)) = chars.get(index) {
+            if *ch == '\n' {
+                return *start;
             }
+            return *start;
         }
         text_weight(text, tab_width)
     } else {
-        let mut previous = 0_u32;
-        for (char_offset, ch) in chars {
-            if char_offset >= offset {
-                break;
-            }
-            if ch.is_whitespace() {
-                previous = char_offset.saturating_add(1);
-            }
+        if chars
+            .iter()
+            .any(|(start, _, ch)| *start == offset && !ch.is_whitespace())
+        {
+            return offset;
         }
-        previous
+
+        let Some(mut index) = chars.iter().rposition(|(start, _, _)| *start < offset) else {
+            return 0;
+        };
+
+        while chars[index].2.is_whitespace() {
+            if index == 0 {
+                return 0;
+            }
+            index -= 1;
+        }
+
+        while index > 0 && !chars[index - 1].2.is_whitespace() {
+            index -= 1;
+        }
+        chars[index].0
     }
 }
 

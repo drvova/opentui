@@ -3,8 +3,7 @@
 ## Prerequisites
 
 - [Bun](https://bun.sh) - JavaScript runtime and package manager
-- [Zig](https://ziglang.org/learn/getting-started/) - Required for building native modules
-- [Rust](https://www.rust-lang.org/tools/install) - Required for the Rust native migration foundation in `packages/core/native`
+- [Rust](https://www.rust-lang.org/tools/install) - Required for building the native runtime in `packages/core/native`
 
 ## Setup
 
@@ -20,7 +19,7 @@ bun install
 bun run build
 ```
 
-**Note:** Only needed when changing native Zig code. TypeScript changes don't require rebuilding.
+**Note:** Rebuild when changing Rust native code or when you need to refresh the platform package in `packages/core/node_modules/@opentui`. Pure TypeScript changes do not require rebuilding the native library.
 
 ## Running Examples
 
@@ -39,16 +38,9 @@ bun test
 # Native tests
 bun run test:native
 
-# Filter native tests
-bun run test:native -Dtest-filter="test name"
-
-# Benchmarks
+# Native benchmarks
 bun run bench:native
 ```
-
-### Rust native foundation
-
-The Rust migration foundation lives in `packages/core/native`. It does not replace the Zig runtime yet; it exists to lock the ABI contract and validate the future Rust `cdylib` path.
 
 ```bash
 cd packages/core

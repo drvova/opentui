@@ -1,8 +1,8 @@
 // OSC 52 clipboard support for terminal applications.
-// Delegates to native Zig implementation for ANSI sequence generation.
+// Delegates to the native runtime for ANSI sequence generation.
 
 import type { Pointer } from "bun:ffi"
-import type { RenderLib } from "../zig.js"
+import type { RenderLib } from "../native.js"
 
 export enum ClipboardTarget {
   Clipboard = 0,

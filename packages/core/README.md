@@ -1,6 +1,6 @@
 # OpenTUI Core
 
-OpenTUI is a native terminal UI core written in Zig with TypeScript bindings. The native core exposes a C ABI and can be used from any language. OpenTUI powers OpenCode in production today and will also power terminal.shop. It is an extensible core with a focus on correctness, stability, and high performance. It provides a component-based architecture with flexible layout capabilities, allowing you to create complex terminal applications.
+OpenTUI is a native terminal UI core written in Rust with TypeScript bindings. The native core exposes a C ABI and can be used from any language. OpenTUI powers OpenCode in production today and will also power terminal.shop. It is an extensible core with a focus on correctness, stability, and high performance. It provides a component-based architecture with flexible layout capabilities, allowing you to create complex terminal applications.
 
 ## Documentation
 
@@ -33,21 +33,19 @@ bun run src/examples/index.ts
 
 ## Benchmarks
 
-Run native performance benchmarks:
+Run Rust-native performance benchmarks:
 
 ```bash
 bun run bench:native
 ```
 
-See [src/zig/bench.zig](src/zig/bench.zig) for available options like `--filter` and `--mem`.
-
 NativeSpanFeed TypeScript benchmarks:
 
 - [src/benchmark/native-span-feed-benchmark.md](src/benchmark/native-span-feed-benchmark.md)
 
-## Rust Native Migration Foundation
+## Native Runtime
 
-The Rust migration groundwork lives in [native](native). It is not the default runtime yet; it provides a checked ABI manifest and a Rust `cdylib` foundation that will be expanded until it can replace the Zig core cleanly.
+The default native runtime lives in [native](native). It is built as a Rust `cdylib`, packaged into the platform-specific `@opentui/core-<platform>-<arch>` packages, and checked against the Bun FFI ABI manifest before release.
 
 ```bash
 bun run native:abi:check

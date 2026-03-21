@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import process from "node:process"
@@ -30,8 +30,8 @@ export interface AbiManifest {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const rootDir = resolve(__dirname, "..")
-const zigSourceDir = join(rootDir, "src", "zig")
-const zigTsPath = join(rootDir, "src", "zig.ts")
+const rustLibPath = join(rootDir, "native", "src", "lib.rs")
+const nativeTsPath = join(rootDir, "src", "native.ts")
 export const abiManifestPath = join(rootDir, "native", "ffi-manifest.json")
 const textRuntimeSymbolNames = sortUnique(Object.keys(textRuntimeSymbols))
 const nativeSpanFeedSymbolNames = sortUnique(Object.keys(nativeSpanFeedSymbols))
@@ -42,25 +42,6 @@ function sortUnique(values: Iterable<string>): string[] {
 
 function readUtf8(path: string): string {
   return readFileSync(path, "utf8")
-}
-
-function listZigFiles(directory: string): string[] {
-  const entries = readdirSync(directory, { withFileTypes: true })
-  const files: string[] = []
-
-  for (const entry of entries) {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) {
-      files.push(...listZigFiles(path))
-      continue
-    }
-
-    if (entry.isFile() && entry.name.endsWith(".zig")) {
-      files.push(path)
-    }
-  }
-
-  return files
 }
 
 function extractBlock(source: string, anchor: string): string {
@@ -96,14 +77,14 @@ function extractBlock(source: string, anchor: string): string {
 }
 
 export function extractNativeExports(source: string): string[] {
-  const exports = source.matchAll(/^(?:pub )?export fn (\w+)\(/gm)
+  const exports = source.matchAll(/pub extern "C" fn\s+(\w+)\(/gm)
   return sortUnique([...exports].map((match) => match[1]))
 }
 
 export function extractInlineLoaderSymbols(source: string): string[] {
   const match = source.match(/const \w+ = dlopen\(resolvedLibPath, \{/)
   if (!match || match.index === undefined) {
-    throw new Error("Unable to find primary dlopen block in zig.ts")
+    throw new Error("Unable to find primary dlopen block in the native loader")
   }
 
   const block = extractBlock(source, match[0])
@@ -121,8 +102,8 @@ function createGroupManifest(bunLoaderSymbols: string[], nativeExports: string[]
 }
 
 export function createAbiManifest(): AbiManifest {
-  const nativeExports = sortUnique(listZigFiles(zigSourceDir).flatMap((file) => extractNativeExports(readUtf8(file))))
-  const coreBunLoaderSymbols = extractInlineLoaderSymbols(readUtf8(zigTsPath))
+  const nativeExports = extractNativeExports(readUtf8(rustLibPath))
+  const coreBunLoaderSymbols = extractInlineLoaderSymbols(readUtf8(nativeTsPath))
   const bunLoaderSymbols = sortUnique([...coreBunLoaderSymbols, ...textRuntimeSymbolNames, ...nativeSpanFeedSymbolNames])
 
   const missingFromNativeExports = bunLoaderSymbols.filter((symbol) => !nativeExports.includes(symbol))

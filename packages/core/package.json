@@ -1,6 +1,6 @@
 {
   "name": "@opentui/core",
-  "description": "OpenTUI is a TypeScript library on a native Zig core for building terminal user interfaces (TUIs)",
+  "description": "OpenTUI is a TypeScript library on a native Rust core for building terminal user interfaces (TUIs)",
   "repository": {
     "type": "git",
     "url": "https://github.com/anomalyco/opentui",
@@ -23,8 +23,8 @@
     "native:rust:test": "cd native && cargo test",
     "native:rust:header": "mkdir -p native/include && cbindgen --config native/cbindgen.toml --crate opentui-native --output native/include/opentui-foundation.h",
     "build:examples": "bun src/examples/build.ts",
-    "test:native": "cd src/zig && zig build test --summary all",
-    "bench:native": "cd src/zig && zig build bench -Dbench-optimize=ReleaseFast --",
+    "test:native": "bun run native:rust:test",
+    "bench:native": "cd native && cargo bench",
     "bench:text-table": "bun src/benchmark/text-table-benchmark.ts",
     "bench:ts": "bun src/benchmark/native-span-feed-benchmark.ts --suite=quick --json=src/benchmark/latest-quick-bench-run.json && bun src/benchmark/native-span-feed-benchmark.ts --suite=default --json=src/benchmark/latest-default-bench-run.json && bun src/benchmark/native-span-feed-benchmark.ts --suite=large --json=src/benchmark/latest-large-bench-run.json && bun src/benchmark/native-span-feed-benchmark.ts --suite=all --json=src/benchmark/latest-all-bench-run.json && bun src/benchmark/native-span-feed-async-benchmark.ts --json=src/benchmark/latest-async-bench-run.json",
     "publish": "bun scripts/publish.ts",

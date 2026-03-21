@@ -34,14 +34,14 @@ import {
   ReserveInfoStruct,
   BuildOptionsStruct,
   AllocatorStatsStruct,
-} from "./zig-structs.js"
+} from "./native-structs.js"
 import type {
   NativeSpanFeedOptions,
   NativeSpanFeedStats,
   ReserveInfo,
   BuildOptions,
   AllocatorStats,
-} from "./zig-structs.js"
+} from "./native-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
 import { nativeSpanFeedSymbols, textRuntimeSymbols } from "./native-symbols.js"
 
@@ -70,7 +70,7 @@ registerEnvVar({
   default: false,
 })
 
-// Env vars used in terminal.zig
+// Env vars consumed by the native terminal runtime
 registerEnvVar({
   name: "OPENTUI_FORCE_WCWIDTH",
   description: "Use wcwidth for character width calculations",

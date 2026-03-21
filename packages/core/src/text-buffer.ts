@@ -1,6 +1,6 @@
 import type { StyledText } from "./lib/styled-text.js"
 import { RGBA } from "./lib/RGBA.js"
-import { resolveRenderLib, type LineInfo, type RenderLib } from "./zig.js"
+import { resolveRenderLib, type LineInfo, type RenderLib } from "./native.js"
 import { type Pointer } from "bun:ffi"
 import { type WidthMethod, type Highlight } from "./types.js"
 import type { SyntaxStyle } from "./syntax-style.js"
