@@ -62,6 +62,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   private _autoScrollAccumulator: number = 0
   private _scrollSpeed: number = 16
   private _keyboardSelectionActive: boolean = false
+  private _keyboardSelectionAnchorOffset: number | null = null
 
   public readonly editBuffer: EditBuffer
   public readonly editorView: EditorView
@@ -132,7 +133,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   }
 
   public get lineInfo(): LineInfo {
-    return this.editorView.getLogicalLineInfo()
+    return this._wrapMode === "none" ? this.editorView.getLogicalLineInfo() : this.editorView.getLineInfo()
   }
 
   private setupEventListeners(options: EditBufferOptions): void {
@@ -182,7 +183,13 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   }
 
   get visualCursor(): VisualCursor {
-    return this.editorView.getVisualCursor()
+    const cursor = this.editorView.getVisualCursor()
+    const viewport = this.editorView.getViewport()
+    return {
+      ...cursor,
+      visualRow: Math.max(0, cursor.visualRow - viewport.offsetY),
+      visualCol: this._wrapMode === "none" ? Math.max(0, cursor.visualCol - viewport.offsetX) : cursor.visualCol,
+    }
   }
 
   get cursorOffset(): number {
@@ -631,7 +638,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   protected renderCursor(buffer: OptimizedBuffer): void {
     if (!this._showCursor || !this._focused) return
 
-    const visualCursor = this.editorView.getVisualCursor()
+    const visualCursor = this.visualCursor
 
     const cursorX = this.x + visualCursor.visualCol + 1 // +1 for 1-based terminal coords
     const cursorY = this.y + visualCursor.visualRow + 1 // +1 for 1-based terminal coords
@@ -784,23 +791,31 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
     if (!shiftPressed) {
       this._keyboardSelectionActive = false
+      this._keyboardSelectionAnchorOffset = null
+      this.editorView.resetLocalSelection()
       this._ctx.clearSelection()
       return
     }
 
     this._keyboardSelectionActive = true
 
-    const visualCursor = this.editorView.getVisualCursor()
-    const cursorX = this.x + visualCursor.visualCol
-    const cursorY = this.y + visualCursor.visualRow
-
     if (isBeforeMovement) {
-      if (!this._ctx.hasSelection) {
-        this._ctx.startSelection(this, cursorX, cursorY)
+      if (this._keyboardSelectionAnchorOffset === null) {
+        const selection = this.getSelection()
+        const cursorOffset = this.cursorOffset
+        if (selection) {
+          this._keyboardSelectionAnchorOffset = cursorOffset === selection.start ? selection.end : selection.start
+        } else {
+          this._keyboardSelectionAnchorOffset = cursorOffset
+        }
       }
       return
     }
 
-    this._ctx.updateSelection(this, cursorX, cursorY, { finishDragging: true })
+    const anchorOffset = this._keyboardSelectionAnchorOffset ?? this.cursorOffset
+    const focusOffset =
+      this.cursorOffset < anchorOffset ? Math.min(anchorOffset + 1, this.editBuffer.length) : this.cursorOffset
+    this.editorView.setSelection(anchorOffset, focusOffset, this._selectionBg, this._selectionFg)
+    this.requestRender()
   }
 }

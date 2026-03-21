@@ -355,8 +355,20 @@ export class TextareaRenderable extends EditBufferRenderable {
   }
 
   private deleteSelectedText(): void {
-    this.editorView.deleteSelectedText()
+    const selection = this.getSelection()
+    if (selection) {
+      const start = this.editBuffer.offsetToPosition(selection.start)
+      const end = this.editBuffer.offsetToPosition(selection.end)
+      if (start && end) {
+        this.editBuffer.deleteRange(start.row, start.col, end.row, end.col)
+      } else {
+        this.editorView.deleteSelectedText()
+      }
+    } else {
+      this.editorView.deleteSelectedText()
+    }
 
+    this.editorView.resetLocalSelection()
     this._ctx.clearSelection()
     this.requestRender()
   }
@@ -383,6 +395,7 @@ export class TextareaRenderable extends EditBufferRenderable {
     if (!select && this.hasSelection()) {
       const selection = this.getSelection()!
       this.editBuffer.setCursorByOffset(selection.start)
+      this.editorView.resetLocalSelection()
       this._ctx.clearSelection()
       this.requestRender()
       return true
@@ -404,6 +417,7 @@ export class TextareaRenderable extends EditBufferRenderable {
       const selection = this.getSelection()!
       const targetOffset = this.cursorOffset === selection.start ? selection.end - 1 : selection.end
       this.editBuffer.setCursorByOffset(targetOffset)
+      this.editorView.resetLocalSelection()
       this._ctx.clearSelection()
       this.requestRender()
       return true
@@ -430,6 +444,12 @@ export class TextareaRenderable extends EditBufferRenderable {
     this.updateSelectionForMovement(select, true)
     this.editorView.moveDownVisual()
     this.updateSelectionForMovement(select, false)
+    if (select && this.logicalCursor.col === 0) {
+      const selection = this.getSelection()
+      if (selection && selection.end === this.cursorOffset && selection.end > selection.start) {
+        this.editorView.setSelection(selection.start, selection.end - 1, this.selectionBg, this.selectionFg)
+      }
+    }
     this.requestRender()
     return true
   }

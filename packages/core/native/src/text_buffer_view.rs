@@ -300,6 +300,10 @@ impl TextBufferViewState {
         (self.selection_bg, self.selection_fg)
     }
 
+    pub(crate) fn selection_anchor_offset(&self) -> Option<u32> {
+        self.local_selection_anchor
+    }
+
     pub(crate) fn default_fg(&self) -> Option<Rgba> {
         self.buffer().default_fg()
     }

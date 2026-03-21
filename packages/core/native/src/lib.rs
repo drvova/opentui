@@ -2221,14 +2221,14 @@ pub extern "C" fn editorViewSetViewport(
     y: u32,
     width: u32,
     height: u32,
-    _move_cursor: bool,
+    move_cursor: bool,
 ) {
     if view.is_null() {
         return;
     }
 
     let view = unsafe { &mut *view };
-    view.set_viewport(x, y, width, height);
+    view.set_viewport(x, y, width, height, move_cursor);
 }
 
 #[unsafe(no_mangle)]
@@ -3287,7 +3287,7 @@ pub extern "C" fn editorViewSetLocalSelection(
     focus_y: i32,
     bg_color: *const f32,
     fg_color: *const f32,
-    _update_cursor: bool,
+    update_cursor: bool,
     _follow_cursor: bool,
 ) -> bool {
     if view.is_null() {
@@ -3302,6 +3302,7 @@ pub extern "C" fn editorViewSetLocalSelection(
         focus_y,
         (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
         (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+        update_cursor,
     )
 }
 
@@ -3314,7 +3315,7 @@ pub extern "C" fn editorViewUpdateLocalSelection(
     focus_y: i32,
     bg_color: *const f32,
     fg_color: *const f32,
-    _update_cursor: bool,
+    update_cursor: bool,
     _follow_cursor: bool,
 ) -> bool {
     if view.is_null() {
@@ -3329,6 +3330,7 @@ pub extern "C" fn editorViewUpdateLocalSelection(
         focus_y,
         (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
         (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+        update_cursor,
     )
 }
 

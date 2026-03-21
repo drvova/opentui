@@ -131,7 +131,7 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
   }
 
   public get lineInfo(): LineInfo {
-    return this.textBufferView.logicalLineInfo
+    return this._wrapMode === "none" ? this.textBufferView.logicalLineInfo : this.textBufferView.lineInfo
   }
 
   public get lineCount(): number {

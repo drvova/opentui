@@ -71,7 +71,7 @@ impl EditorViewState {
         }
     }
 
-    pub fn set_viewport(&mut self, x: u32, y: u32, width: u32, height: u32) {
+    pub fn set_viewport(&mut self, x: u32, y: u32, width: u32, height: u32, move_cursor: bool) {
         self.viewport_x = x;
         self.viewport_y = y;
         self.viewport_width = width;
@@ -79,6 +79,9 @@ impl EditorViewState {
         self.text_buffer_view.set_viewport(x, y, width, height);
         if width > 0 {
             self.text_buffer_view.set_wrap_width(width);
+        }
+        if move_cursor {
+            self.move_cursor_into_viewport();
         }
     }
 
@@ -89,6 +92,32 @@ impl EditorViewState {
             self.viewport_width,
             self.viewport_height,
         )
+    }
+
+    fn move_cursor_into_viewport(&mut self) {
+        let cursor = self.visual_cursor();
+        let min_row = self.viewport_y;
+        let max_row = self
+            .viewport_y
+            .saturating_add(self.viewport_height.saturating_sub(1));
+        let min_col = self.viewport_x;
+        let max_col = self
+            .viewport_x
+            .saturating_add(self.viewport_width.saturating_sub(1));
+
+        let target_row = cursor.visual_row.clamp(min_row, max_row);
+        let target_col = if self.viewport_width == 0 {
+            cursor.visual_col
+        } else {
+            cursor.visual_col.clamp(min_col, max_col)
+        };
+
+        if let Some(offset) = self
+            .text_buffer_view
+            .offset_for_visual_position(target_row, target_col)
+        {
+            self.edit_buffer_mut().set_cursor_by_offset(offset);
+        }
     }
 
     pub fn set_scroll_margin(&mut self, margin: f32) {
@@ -127,9 +156,15 @@ impl EditorViewState {
         focus_y: i32,
         bg: Option<[f32; 4]>,
         fg: Option<[f32; 4]>,
+        update_cursor: bool,
     ) -> bool {
-        self.text_buffer_view
-            .set_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg)
+        let changed = self
+            .text_buffer_view
+            .set_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg);
+        if changed && update_cursor {
+            self.update_cursor_to_selection_focus();
+        }
+        changed
     }
 
     pub fn update_selection(&mut self, end: u32, bg: Option<[f32; 4]>, fg: Option<[f32; 4]>) {
@@ -144,9 +179,15 @@ impl EditorViewState {
         focus_y: i32,
         bg: Option<[f32; 4]>,
         fg: Option<[f32; 4]>,
+        update_cursor: bool,
     ) -> bool {
-        self.text_buffer_view
-            .update_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg)
+        let changed = self
+            .text_buffer_view
+            .update_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg);
+        if changed && update_cursor {
+            self.update_cursor_to_selection_focus();
+        }
+        changed
     }
 
     pub fn reset_selection(&mut self) {
@@ -387,6 +428,18 @@ impl EditorViewState {
             offset,
         }
     }
+
+    fn update_cursor_to_selection_focus(&mut self) {
+        let Some((start, end)) = self.selection_range() else {
+            return;
+        };
+        let focus_offset = match self.text_buffer_view.selection_anchor_offset() {
+            Some(anchor) if anchor == start => end,
+            Some(_) => start,
+            None => end,
+        };
+        self.edit_buffer_mut().set_cursor_by_offset(focus_offset);
+    }
 }
 
 #[cfg(test)]
@@ -406,7 +459,7 @@ mod tests {
         view.set_wrap_mode(1);
         assert_eq!(view.virtual_line_count(), 3);
 
-        view.set_viewport(2, 4, 8, 3);
+        view.set_viewport(2, 4, 8, 3, false);
         assert_eq!(view.viewport(), (2, 4, 8, 3));
         assert_eq!(view.virtual_line_count(), 4);
     }
@@ -447,7 +500,7 @@ mod tests {
             }
         );
 
-        view.set_local_selection(0, 0, 5, 1, None, None);
+        view.set_local_selection(0, 0, 5, 1, None, None, false);
         assert!(!view.selected_text_bytes().is_empty());
         view.delete_selected_text();
         assert_ne!(String::from_utf8_lossy(view.text_bytes()), "Hello World");
