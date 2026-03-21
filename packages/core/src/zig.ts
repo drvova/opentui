@@ -43,7 +43,7 @@ import type {
   AllocatorStats,
 } from "./zig-structs.js"
 import { isBunfsPath } from "./lib/bunfs.js"
-import { nativeSpanFeedSymbols, textRuntimeSymbols } from "./native-symbols.js"
+import { nativeSpanFeedSymbols, syntaxStyleSymbols, textRuntimeSymbols } from "./native-symbols.js"
 
 const module = await import(`@opentui/core-${process.platform}-${process.arch}/index.ts`)
 let targetLibPath = module.default
@@ -96,6 +96,20 @@ registerEnvVar({
   default: false,
 })
 
+registerEnvVar({
+  name: "OTUI_RUST_LIB_PATH",
+  description: "Optional path to a Rust cdylib used to override selected native symbol groups during migration.",
+  type: "string",
+  default: "",
+})
+
+registerEnvVar({
+  name: "OTUI_RUST_SYMBOL_GROUPS",
+  description: "Comma-separated list of Rust-backed native symbol groups to overlay on top of the default native library.",
+  type: "string",
+  default: "",
+})
+
 // Cursor & mouse pointer style mappings (avoid recreation on each call)
 const CURSOR_STYLE_TO_ID = { block: 0, line: 1, underline: 2, default: 3 } as const
 const CURSOR_ID_TO_STYLE = ["block", "line", "underline", "default"] as const
@@ -105,6 +119,39 @@ const MOUSE_STYLE_TO_ID = { default: 0, pointer: 1, text: 2, crosshair: 3, move:
 let globalTraceSymbols: Record<string, number[]> | null = null
 let globalFFILogPath: string | null = null
 let exitHandlerRegistered = false
+const rustOverlaySymbolGroups = {
+  syntaxStyle: syntaxStyleSymbols,
+} as const
+
+type NativeLibraryHandle = ReturnType<typeof dlopen>
+
+function parseRustOverlayGroups(): Array<keyof typeof rustOverlaySymbolGroups> {
+  const configuredGroups = env.OTUI_RUST_SYMBOL_GROUPS
+  if (!configuredGroups) {
+    return []
+  }
+
+  const requested = configuredGroups
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  const unique = [...new Set(requested)]
+  const invalid = unique.filter((name) => !(name in rustOverlaySymbolGroups))
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unsupported OTUI_RUST_SYMBOL_GROUPS value(s): ${invalid.join(", ")}. Supported groups: ${Object.keys(
+        rustOverlaySymbolGroups,
+      ).join(", ")}`,
+    )
+  }
+
+  return unique as Array<keyof typeof rustOverlaySymbolGroups>
+}
+
+function getRustOverlayDescriptors(groups: Array<keyof typeof rustOverlaySymbolGroups>) {
+  return Object.assign({}, ...groups.map((group) => rustOverlaySymbolGroups[group]))
+}
 
 function toPointer(value: number | bigint): Pointer {
   if (typeof value === "bigint") {
@@ -123,7 +170,7 @@ function toNumber(value: number | bigint): number {
 function getOpenTUILib(libPath?: string) {
   const resolvedLibPath = libPath || targetLibPath
 
-  const rawSymbols = dlopen(resolvedLibPath, {
+  const baseLibrary = dlopen(resolvedLibPath, {
     // Logging
     setLogCallback: {
       args: ["ptr"],
@@ -527,13 +574,32 @@ function getOpenTUILib(libPath?: string) {
     ...nativeSpanFeedSymbols,
   })
 
+  const rustOverlayPath = env.OTUI_RUST_LIB_PATH
+  const rustOverlayGroups = parseRustOverlayGroups()
+  const overlayLibraries: NativeLibraryHandle[] = []
+  let mergedLibrary = baseLibrary
+
+  if (rustOverlayPath && rustOverlayGroups.length > 0) {
+    const overlayLibrary = dlopen(rustOverlayPath, getRustOverlayDescriptors(rustOverlayGroups))
+    overlayLibraries.push(overlayLibrary)
+    mergedLibrary = {
+      ...baseLibrary,
+      symbols: {
+        ...baseLibrary.symbols,
+        ...overlayLibrary.symbols,
+      },
+      libraries: [baseLibrary, overlayLibrary],
+    } as typeof baseLibrary
+  }
+
   if (env.OTUI_DEBUG_FFI || env.OTUI_TRACE_FFI) {
     return {
-      symbols: convertToDebugSymbols(rawSymbols.symbols),
+      ...mergedLibrary,
+      symbols: convertToDebugSymbols(mergedLibrary.symbols),
     }
   }
 
-  return rawSymbols
+  return mergedLibrary
 }
 
 function convertToDebugSymbols<T extends Record<string, any>>(symbols: T): T {

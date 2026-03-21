@@ -1,3 +1,26 @@
+export const syntaxStyleSymbols = {
+  createSyntaxStyle: {
+    args: [],
+    returns: "ptr",
+  },
+  destroySyntaxStyle: {
+    args: ["ptr"],
+    returns: "void",
+  },
+  syntaxStyleRegister: {
+    args: ["ptr", "ptr", "usize", "ptr", "ptr", "u8"],
+    returns: "u32",
+  },
+  syntaxStyleResolveByName: {
+    args: ["ptr", "ptr", "usize"],
+    returns: "u32",
+  },
+  syntaxStyleGetStyleCount: {
+    args: ["ptr"],
+    returns: "usize",
+  },
+} as const
+
 export const textRuntimeSymbols = {
   createTextBuffer: {
     args: ["u8"],
@@ -527,26 +550,7 @@ export const textRuntimeSymbols = {
     args: ["ptr", "ptr"],
     returns: "void",
   },
-  createSyntaxStyle: {
-    args: [],
-    returns: "ptr",
-  },
-  destroySyntaxStyle: {
-    args: ["ptr"],
-    returns: "void",
-  },
-  syntaxStyleRegister: {
-    args: ["ptr", "ptr", "usize", "ptr", "ptr", "u8"],
-    returns: "u32",
-  },
-  syntaxStyleResolveByName: {
-    args: ["ptr", "ptr", "usize"],
-    returns: "u32",
-  },
-  syntaxStyleGetStyleCount: {
-    args: ["ptr"],
-    returns: "usize",
-  },
+  ...syntaxStyleSymbols,
 } as const
 
 export const nativeSpanFeedSymbols = {

@@ -2,6 +2,8 @@
 
 ## Self-Improvement Ledger
 
+- 2026-03-20 | seam: direct Bun JS verification of `syntax-style.test.ts` failed because the platform native package was absent from `packages/core/node_modules/@opentui` | root cause: this checkout had source code but no locally built optional native artifact for `@opentui/core-linux-x64` | canonical fix: run `export PATH="$HOME/.bun/bin:$PATH" && cd packages/core && bun run build:native` before wrapper-level runtime tests | validation seam: `export PATH="$HOME/.bun/bin:$PATH" && cd packages/core && bun test src/syntax-style.test.ts`
+- 2026-03-20 | seam: direct Bun JS verification failed because workspace dependencies like `bun-ffi-structs` were not installed locally | root cause: the repo checkout had no populated workspace `node_modules` tree | canonical fix: run `export PATH="$HOME/.bun/bin:$PATH" && bun install` at repo root before JS-side verification | validation seam: `export PATH="$HOME/.bun/bin:$PATH" && bun install && cd packages/core && bun test src/tests/rust-syntax-style-overlay.test.ts`
 - 2026-03-20 | seam: Bun-backed package-script verification failed locally because `bun` was unavailable to the current shell | root cause: the environment did not have Bun installed and the installer's PATH update was not visible in the active non-login shell | canonical fix: install Bun to `~/.bun/bin` and prepend `PATH="$HOME/.bun/bin:$PATH"` in verification shells | validation seam: `export PATH="$HOME/.bun/bin:$PATH" && cd packages/core && bun run native:abi:check && bun run native:rust:test`
 
 Default to using Bun instead of Node.js.
