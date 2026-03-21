@@ -4,6 +4,7 @@ use core::ffi::{c_char, c_uint};
 
 mod native_span_feed;
 mod syntax_style;
+mod text_buffer;
 
 pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
 pub type NativeSpanFeedOptions = native_span_feed::Options;
@@ -11,9 +12,12 @@ pub type NativeSpanFeedReserveInfo = native_span_feed::ReserveInfo;
 pub type NativeSpanFeedSpanInfo = native_span_feed::SpanInfo;
 pub type NativeSpanFeedStats = native_span_feed::Stats;
 pub type NativeSpanFeedStream = native_span_feed::Stream;
+pub type NativeStyledChunk = text_buffer::StyledChunk;
+pub type NativeTextBuffer = text_buffer::TextBufferState;
 
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use syntax_style::{Rgba, SyntaxStyleState};
+use text_buffer::{TextBufferState, copy_bytes_to_out};
 
 const ABI_SYMBOL_COUNT: c_uint = parse_symbol_count();
 const ABI_HASH_CSTR: &[u8] = concat!(env!("OPENTUI_ABI_SYMBOL_HASH"), "\0").as_bytes();
@@ -139,6 +143,299 @@ pub extern "C" fn syntaxStyleGetStyleCount(style: *const SyntaxStyleState) -> us
 
     let state = unsafe { &*style };
     state.style_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createTextBuffer(width_method: u8) -> *mut NativeTextBuffer {
+    Box::into_raw(Box::new(TextBufferState::new(width_method)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyTextBuffer(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(tb));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetLength(tb: *const NativeTextBuffer) -> u32 {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    tb.length()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetByteSize(tb: *const NativeTextBuffer) -> u32 {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    tb.byte_size()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferReset(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.reset();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferClear(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.clear();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetDefaultFg(tb: *mut NativeTextBuffer, fg: *const f32) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let fg = (!fg.is_null()).then(|| color_from_ptr(fg));
+    tb.set_default_fg(fg);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetDefaultBg(tb: *mut NativeTextBuffer, bg: *const f32) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let bg = (!bg.is_null()).then(|| color_from_ptr(bg));
+    tb.set_default_bg(bg);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetDefaultAttributes(tb: *mut NativeTextBuffer, attr: *const u32) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let attributes = (!attr.is_null()).then(|| unsafe { *attr });
+    tb.set_default_attributes(attributes);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferResetDefaults(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.reset_defaults();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetTabWidth(tb: *const NativeTextBuffer) -> u8 {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    tb.tab_width()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetTabWidth(tb: *mut NativeTextBuffer, width: u8) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.set_tab_width(width);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferRegisterMemBuffer(
+    tb: *mut NativeTextBuffer,
+    data_ptr: *const u8,
+    data_len: usize,
+    _owned: bool,
+) -> u16 {
+    if tb.is_null() || data_ptr.is_null() {
+        return 0xffff;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    tb.register_mem_buffer(data)
+        .map(u16::from)
+        .unwrap_or(0xffff)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferReplaceMemBuffer(
+    tb: *mut NativeTextBuffer,
+    mem_id: u8,
+    data_ptr: *const u8,
+    data_len: usize,
+    _owned: bool,
+) -> bool {
+    if tb.is_null() || data_ptr.is_null() {
+        return false;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    tb.replace_mem_buffer(mem_id, data)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferClearMemRegistry(tb: *mut NativeTextBuffer) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.clear_mem_registry();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetTextFromMem(tb: *mut NativeTextBuffer, mem_id: u8) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.set_text_from_mem(mem_id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferAppend(
+    tb: *mut NativeTextBuffer,
+    data_ptr: *const u8,
+    data_len: usize,
+) {
+    if tb.is_null() || data_ptr.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let data = unsafe { std::slice::from_raw_parts(data_ptr, data_len) };
+    tb.append_bytes(data);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferAppendFromMemId(tb: *mut NativeTextBuffer, mem_id: u8) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    tb.append_from_mem(mem_id);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferLoadFile(
+    tb: *mut NativeTextBuffer,
+    path_ptr: *const u8,
+    path_len: usize,
+) -> bool {
+    if tb.is_null() || path_ptr.is_null() {
+        return false;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let path = unsafe { std::slice::from_raw_parts(path_ptr, path_len) };
+    tb.load_file(path)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferSetStyledText(
+    tb: *mut NativeTextBuffer,
+    chunks_ptr: *const NativeStyledChunk,
+    chunk_count: usize,
+) {
+    if tb.is_null() {
+        return;
+    }
+
+    let tb = unsafe { &mut *tb };
+    let chunks = if chunks_ptr.is_null() || chunk_count == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(chunks_ptr, chunk_count) }
+    };
+    tb.set_styled_text(chunks);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetLineCount(tb: *const NativeTextBuffer) -> u32 {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    tb.line_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetPlainText(
+    tb: *const NativeTextBuffer,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    copy_bytes_to_out(tb.plain_text_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetTextRange(
+    tb: *const NativeTextBuffer,
+    start_offset: u32,
+    end_offset: u32,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    let text = tb.text_range(start_offset, end_offset);
+    copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferGetTextRangeByCoords(
+    tb: *const NativeTextBuffer,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if tb.is_null() {
+        return 0;
+    }
+
+    let tb = unsafe { &*tb };
+    let text = tb.text_range_by_coords(start_row, start_col, end_row, end_col);
+    copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
 }
 
 #[unsafe(no_mangle)]
