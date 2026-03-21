@@ -804,7 +804,13 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
         const selection = this.getSelection()
         const cursorOffset = this.cursorOffset
         if (selection) {
-          this._keyboardSelectionAnchorOffset = cursorOffset === selection.start ? selection.end : selection.start
+          if (cursorOffset === selection.start) {
+            this._keyboardSelectionAnchorOffset = selection.end
+          } else if (cursorOffset === selection.end) {
+            this._keyboardSelectionAnchorOffset = selection.start
+          } else {
+            this._keyboardSelectionAnchorOffset = cursorOffset
+          }
         } else {
           this._keyboardSelectionAnchorOffset = cursorOffset
         }

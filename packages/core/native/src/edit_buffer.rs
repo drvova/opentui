@@ -4,7 +4,7 @@ use crate::text_buffer::{
     TextBufferState, line_start_offset, next_offset, offset_to_position, position_to_offset,
     previous_offset, text_weight, text_width,
 };
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
 
 static NEXT_EDIT_BUFFER_ID: AtomicU16 = AtomicU16::new(1);
 
@@ -497,75 +497,197 @@ impl EditBufferState {
 }
 
 fn word_boundary(text: &str, offset: u32, tab_width: u8, forward: bool) -> u32 {
-    let chars: Vec<(u32, u32, char)> = text
-        .char_indices()
-        .scan(0_u32, |weight, (byte_index, ch)| {
-            let current = *weight;
-            let char_weight = match ch {
-                '\r' => 0,
-                '\n' => 1,
-                '\t' => u32::from(tab_width.max(1)),
-                _ => ch.width().unwrap_or(0) as u32,
-            };
-            *weight = weight.saturating_add(char_weight);
-            Some((current, *weight, byte_index, ch))
-        })
-        .map(|(current, next, _byte, ch)| (current, next, ch))
-        .collect();
+    let Some((row, col)) = offset_to_position(text, tab_width, offset) else {
+        return offset.min(text_weight(text, tab_width));
+    };
+
+    let lines: Vec<&str> = if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').collect()
+    };
+    let row_index = usize::try_from(row).unwrap_or(usize::MAX);
+    if row_index >= lines.len() {
+        return offset;
+    }
+
+    let line = lines[row_index];
+    let line_width = text_width(line, tab_width);
+    let boundaries = build_wrap_boundaries(line, tab_width);
 
     if forward {
-        let mut index = match chars.iter().position(|(_, end, _)| *end > offset) {
-            Some(index) => index,
-            None => return text_weight(text, tab_width),
-        };
-
-        if chars[index].2.is_whitespace() {
-            while index < chars.len() && chars[index].2.is_whitespace() {
-                index += 1;
+        for boundary in boundaries {
+            let target_col = boundary.start_offset.saturating_add(boundary.width);
+            if boundary.start_offset > col || (boundary.start_offset == col && boundary.is_word) {
+                return position_to_offset(text, tab_width, row, target_col).unwrap_or(offset);
             }
-            return chars
-                .get(index)
-                .map(|(start, _, _)| *start)
-                .unwrap_or_else(|| text_weight(text, tab_width));
         }
 
-        while index < chars.len() && !chars[index].2.is_whitespace() {
-            index += 1;
-        }
-        while index < chars.len() && matches!(chars[index].2, ' ' | '\t' | '\r') {
-            index += 1;
-        }
-        if let Some((start, _, ch)) = chars.get(index) {
-            if *ch == '\n' {
-                return *start;
-            }
-            return *start;
-        }
-        text_weight(text, tab_width)
-    } else {
-        if chars
-            .iter()
-            .any(|(start, _, ch)| *start == offset && !ch.is_whitespace())
-        {
-            return offset;
+        if row_index + 1 < lines.len() {
+            return position_to_offset(text, tab_width, row.saturating_add(1), 0).unwrap_or(offset);
         }
 
-        let Some(mut index) = chars.iter().rposition(|(start, _, _)| *start < offset) else {
-            return 0;
-        };
-
-        while chars[index].2.is_whitespace() {
-            if index == 0 {
-                return 0;
-            }
-            index -= 1;
-        }
-
-        while index > 0 && !chars[index - 1].2.is_whitespace() {
-            index -= 1;
-        }
-        chars[index].0
+        return position_to_offset(text, tab_width, row, line_width).unwrap_or(offset);
     }
+
+    let mut last_boundary = None;
+    for boundary in boundaries {
+        let target_col = boundary.start_offset.saturating_add(boundary.width);
+        if target_col < col {
+            last_boundary = Some(target_col);
+            continue;
+        }
+        break;
+    }
+
+    if let Some(target_col) = last_boundary {
+        return position_to_offset(text, tab_width, row, target_col).unwrap_or(offset);
+    }
+
+    if row_index > 0 {
+        let previous_row = row.saturating_sub(1);
+        let previous_width = text_width(lines[row_index - 1], tab_width);
+        return position_to_offset(text, tab_width, previous_row, previous_width).unwrap_or(offset);
+    }
+
+    0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WordClass {
+    AsciiWord,
+    CjkWord,
+    Other,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WrapBoundary {
+    start_offset: u32,
+    width: u32,
+    is_word: bool,
+}
+
+fn build_wrap_boundaries(text: &str, tab_width: u8) -> Vec<WrapBoundary> {
+    let mut boundaries = Vec::new();
+    let mut offset = 0_u32;
+    let mut previous: Option<(u32, u32, WordClass, char)> = None;
+
+    for grapheme in UnicodeSegmentation::graphemes(text, true) {
+        let Some(first_char) = grapheme.chars().next() else {
+            continue;
+        };
+        let width = text_width(grapheme, tab_width);
+        let class = classify_word_class(first_char);
+
+        if let Some((start, previous_width, previous_class, previous_char)) = previous {
+            if is_cjk_ascii_transition(previous_class, class) {
+                push_boundary(&mut boundaries, start, previous_width, is_word_codepoint(previous_char));
+            }
+        }
+
+        if grapheme.chars().count() == 1 && is_wrap_break_char(first_char) {
+            push_boundary(&mut boundaries, offset, width.max(1), is_word_codepoint(first_char));
+        }
+
+        previous = Some((offset, width.max(1), class, first_char));
+        offset = offset.saturating_add(width);
+    }
+
+    boundaries
+}
+
+fn push_boundary(boundaries: &mut Vec<WrapBoundary>, start_offset: u32, width: u32, is_word: bool) {
+    if boundaries
+        .last()
+        .is_some_and(|last| last.start_offset == start_offset && last.width == width)
+    {
+        return;
+    }
+
+    boundaries.push(WrapBoundary {
+        start_offset,
+        width,
+        is_word,
+    });
+}
+
+fn is_wrap_break_char(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '-' | '/' | '\\' | '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']'
+                | '{' | '}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{200A}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{200B}'
+                | '\u{00AD}'
+                | '\u{2010}'
+                | '\u{3001}'
+                | '\u{3002}'
+                | '\u{FF01}'
+                | '\u{FF1F}'
+        )
+}
+
+fn is_ascii_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn is_cjk_word_codepoint(ch: char) -> bool {
+    let cp = ch as u32;
+    matches!(
+        cp,
+        0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xF900..=0xFAFF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+            | 0x2CEB0..=0x2EBEF
+            | 0x2EBF0..=0x2EE5D
+            | 0x2F800..=0x2FA1F
+            | 0x3040..=0x309F
+            | 0x30A0..=0x30FF
+            | 0x31F0..=0x31FF
+            | 0xFF66..=0xFF9D
+            | 0x1100..=0x11FF
+            | 0x3130..=0x318F
+            | 0xA960..=0xA97F
+            | 0xAC00..=0xD7AF
+            | 0xD7B0..=0xD7FF
+    )
+}
+
+fn classify_word_class(ch: char) -> WordClass {
+    if ch.is_ascii() {
+        return if is_ascii_word_char(ch) {
+            WordClass::AsciiWord
+        } else {
+            WordClass::Other
+        };
+    }
+
+    if is_cjk_word_codepoint(ch) {
+        return WordClass::CjkWord;
+    }
+
+    WordClass::Other
+}
+
+fn is_word_codepoint(ch: char) -> bool {
+    classify_word_class(ch) != WordClass::Other
+}
+
+fn is_cjk_ascii_transition(previous: WordClass, current: WordClass) -> bool {
+    matches!(
+        (previous, current),
+        (WordClass::CjkWord, WordClass::AsciiWord) | (WordClass::AsciiWord, WordClass::CjkWord)
+    )
 }
 
 fn line_width_at(text: &str, tab_width: u8, row: u32) -> u32 {
@@ -638,11 +760,31 @@ mod tests {
         let mut buffer = EditBufferState::new(0);
         buffer.set_text_bytes(b"hello world\nnext");
         buffer.set_cursor_to_line_col(0, 6);
-        assert_eq!(buffer.next_word_boundary().offset, 11);
-        assert_eq!(buffer.prev_word_boundary().offset, 6);
+        assert_eq!(buffer.next_word_boundary().offset, 12);
+        assert_eq!(buffer.prev_word_boundary().offset, 0);
         assert_eq!(buffer.eol().col, 11);
 
         buffer.delete_range_by_offsets(0, 6);
         assert_eq!(String::from_utf8_lossy(buffer.text_bytes()), "world\nnext");
+    }
+
+    #[test]
+    fn word_boundaries_match_cjk_and_space_cases() {
+        let mut buffer = EditBufferState::new(0);
+        buffer.set_text_bytes("日本語。abc".as_bytes());
+        assert_eq!(buffer.next_word_boundary().offset, 8);
+        buffer.set_cursor_by_offset(11);
+        assert_eq!(buffer.prev_word_boundary().offset, 8);
+
+        buffer.set_text_bytes("テストtest".as_bytes());
+        assert_eq!(buffer.next_word_boundary().offset, 6);
+        buffer.set_cursor_by_offset(10);
+        assert_eq!(buffer.prev_word_boundary().offset, 6);
+
+        buffer.set_text_bytes(b"hello world test");
+        buffer.set_cursor_by_offset(5);
+        assert_eq!(buffer.next_word_boundary().offset, 12);
+        buffer.set_cursor_by_offset(12);
+        assert_eq!(buffer.prev_word_boundary().offset, 6);
     }
 }

@@ -84,14 +84,14 @@ class GutterRenderable extends Renderable {
     this._lineNumberOffset = options.lineNumberOffset
     this._hideLineNumbers = options.hideLineNumbers
     this._lineNumbers = options.lineNumbers ?? new Map()
-    this._lastKnownLineCount = this.target.virtualLineCount
+    this._lastKnownLineCount = this.target.lineCount
     this._lastKnownScrollY = this.target.scrollY
     this.calculateSignWidths()
     this.setupMeasureFunc()
 
     // Use lifecycle pass to detect line count changes BEFORE layout
     this.onLifecyclePass = () => {
-      const currentLineCount = this.target.virtualLineCount
+      const currentLineCount = this.target.lineCount
       if (currentLineCount !== this._lastKnownLineCount) {
         this._lastKnownLineCount = currentLineCount
         this.yogaNode.markDirty()
@@ -166,7 +166,7 @@ class GutterRenderable extends Renderable {
   }
 
   private calculateWidth(): number {
-    const totalLines = this.target.virtualLineCount
+    const totalLines = this.target.lineCount
 
     // Find max line number, considering both calculated and custom line numbers
     let maxLineNumber = totalLines + this._lineNumberOffset

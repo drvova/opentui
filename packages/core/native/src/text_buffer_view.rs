@@ -43,6 +43,28 @@ pub(crate) struct VisibleLine {
 
 pub const NO_SELECTION: u64 = 0xffff_ffff_ffff_ffff;
 
+fn is_wrap_break(ch: char) -> bool {
+    ch.is_whitespace()
+        || matches!(
+            ch,
+            '-' | '/' | '\\' | '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']'
+                | '{' | '}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'..='\u{200A}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{200B}'
+                | '\u{00AD}'
+                | '\u{2010}'
+                | '\u{3001}'
+                | '\u{3002}'
+                | '\u{FF01}'
+                | '\u{FF1F}'
+        )
+}
+
 #[derive(Debug)]
 pub struct TextBufferViewState {
     text_buffer: *mut TextBufferState,
@@ -444,6 +466,10 @@ impl TextBufferViewState {
     }
 
     fn selection_offset_for_coords(&self, x: i32, y: i32, text_end_offset: u32) -> Option<u32> {
+        if y < 0 || x < 0 {
+            return Some(0);
+        }
+
         if self.viewport_height > 0 {
             let max_visible_y = i32::try_from(self.viewport_height).unwrap_or(i32::MAX) - 1;
             if y > max_visible_y {
@@ -457,9 +483,6 @@ impl TextBufferViewState {
         }
 
         let max_y = i32::try_from(lines.len()).unwrap_or(i32::MAX) - 1;
-        if y < 0 || x < 0 {
-            return Some(0);
-        }
         if y > max_y {
             return Some(text_end_offset);
         }
@@ -552,7 +575,7 @@ impl TextBufferViewState {
                     let mut last_break_col = None;
                     let mut wrap_index = 0_u32;
 
-                    for token in line.split_inclusive(char::is_whitespace) {
+                    for token in line.split_inclusive(is_wrap_break) {
                         let token_width = text_width(token, tab_width);
                         if token_width > wrap_width {
                             if current_col > segment_start_col {
@@ -588,14 +611,15 @@ impl TextBufferViewState {
                                 }
 
                                 current_col = current_col.saturating_add(width);
-                                if ch.is_whitespace() {
+                                if is_wrap_break(ch) {
                                     last_break_col = Some(current_col);
                                 }
                             }
                             continue;
                         }
 
-                        if current_col > 0 && current_col.saturating_add(token_width) > wrap_width {
+                        let segment_width = current_col.saturating_sub(segment_start_col);
+                        if segment_width > 0 && segment_width.saturating_add(token_width) > wrap_width {
                             let end_col = last_break_col.unwrap_or(current_col);
                             virtual_lines.push(VirtualLine {
                                 start_offset: line_start.saturating_add(segment_start_col),
@@ -610,7 +634,7 @@ impl TextBufferViewState {
                         }
 
                         current_col = current_col.saturating_add(token_width);
-                        if token.ends_with(char::is_whitespace) {
+                        if token.chars().last().is_some_and(is_wrap_break) {
                             last_break_col = Some(current_col);
                         }
                     }
@@ -708,5 +732,46 @@ mod tests {
         assert!(!view.selected_text_bytes().is_empty());
         view.reset_local_selection();
         assert_eq!(view.selection_info(), NO_SELECTION);
+    }
+
+    #[test]
+    fn word_wrap_keeps_following_tokens_on_the_same_segment_after_a_wrap() {
+        let mut buffer = TextBufferState::new(0);
+        let id = buffer.register_mem_buffer(b"aaaaaa bbb ccc").unwrap();
+        buffer.set_text_from_mem(id);
+
+        let mut view = TextBufferViewState::new(&mut buffer);
+        view.set_wrap_mode(2);
+        view.set_wrap_width(10);
+
+        let line_info = view.line_info();
+        let widths =
+            unsafe { std::slice::from_raw_parts(line_info.width_cols, line_info.width_cols_len as usize) };
+
+        assert_eq!(widths, &[7, 7]);
+    }
+
+    #[test]
+    fn word_wrap_uses_punctuation_breaks_inside_longer_tokens() {
+        let mut buffer = TextBufferState::new(0);
+        let id = buffer
+            .register_mem_buffer(b"Shift+W to toggle wrap mode (word/char/none)")
+            .unwrap();
+        buffer.set_text_from_mem(id);
+
+        let mut view = TextBufferViewState::new(&mut buffer);
+        view.set_wrap_mode(2);
+        view.set_wrap_width(24);
+
+        let info = view.line_info();
+        let widths =
+            unsafe { std::slice::from_raw_parts(info.width_cols, info.width_cols_len as usize) };
+        let starts =
+            unsafe { std::slice::from_raw_parts(info.start_cols, info.start_cols_len as usize) };
+
+        assert_eq!(widths, &[23, 21]);
+        assert_eq!(starts, &[0, 23]);
+        assert_eq!(view.text_for_offsets(0, 23), "Shift+W to toggle wrap ");
+        assert_eq!(view.text_for_offsets(23, 44), "mode (word/char/none)");
     }
 }
