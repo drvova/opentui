@@ -765,7 +765,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public addToHitGrid(x: number, y: number, width: number, height: number, id: number) {
     if (id !== this.capturedRenderable?.num) {
-      this.lib.addToHitGrid(this.rendererPtr, x, y, width, height, id)
+      this.lib.addToCurrentHitGridClipped(this.rendererPtr, x, y, width, height, id)
     }
   }
 
@@ -2094,6 +2094,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       const end = performance.now()
       this.renderStats.frameCallbackTime = end - start
 
+      this.nextRenderBuffer.clear(this.backgroundColor)
+      this.lib.clearCurrentHitGrid(this.rendererPtr)
       this.root.render(this.nextRenderBuffer, deltaTime)
 
       for (const postProcessFn of this.postProcessFns) {
@@ -2167,6 +2169,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.renderingNative = true
     this.lib.render(this.rendererPtr, force)
+    this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
+    this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
     // this.dumpStdoutBuffer(Date.now())
     this.renderingNative = false
   }

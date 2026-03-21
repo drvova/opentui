@@ -986,12 +986,14 @@ impl OptimizedBuffer {
                 .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
                 .sum::<usize>() as i32;
             let padding = 2;
-            let title_x = match title_alignment {
+            let unclamped_title_x = match title_alignment {
                 1 => start_x + ((width as i32 - title_width) / 2).max(padding),
                 2 => start_x + width as i32 - padding - title_width,
                 _ => start_x + padding,
-            }
-            .clamp(start_x + 1, end_x.saturating_sub(title_width));
+            };
+            let min_title_x = start_x + 1;
+            let max_title_x = end_x.saturating_sub(title_width).max(min_title_x);
+            let title_x = unclamped_title_x.clamp(min_title_x, max_title_x);
             self.draw_text(
                 title_x as usize,
                 start_y as usize,

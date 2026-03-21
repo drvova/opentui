@@ -3,7 +3,7 @@ use std::collections::HashMap;
 pub type Rgba = [f32; 4];
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct CursorState {
     pub x: u32,
     pub y: u32,
@@ -14,6 +14,22 @@ pub struct CursorState {
     pub g: f32,
     pub b: f32,
     pub a: f32,
+}
+
+impl Default for CursorState {
+    fn default() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            visible: false,
+            style: 3,
+            blinking: false,
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }
+    }
 }
 
 #[repr(C)]

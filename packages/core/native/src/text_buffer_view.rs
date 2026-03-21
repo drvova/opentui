@@ -1,5 +1,6 @@
 use crate::text_buffer::{
-    TextBufferState, copy_bytes_to_out, line_start_offset, next_offset, text_width,
+    Rgba, TextBufferState, char_weight, copy_bytes_to_out, line_start_offset, next_offset,
+    text_width,
 };
 
 #[repr(C)]
@@ -31,12 +32,23 @@ pub(crate) struct VirtualLine {
     pub(crate) wrap_index: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VisibleLine {
+    pub(crate) viewport_row: u32,
+    pub(crate) start_offset: u32,
+    pub(crate) end_offset: u32,
+    pub(crate) selection_start: Option<u32>,
+    pub(crate) selection_end: Option<u32>,
+}
+
 pub const NO_SELECTION: u64 = 0xffff_ffff_ffff_ffff;
 
 #[derive(Debug)]
 pub struct TextBufferViewState {
     text_buffer: *mut TextBufferState,
     selection: Option<(u32, u32)>,
+    selection_bg: Option<Rgba>,
+    selection_fg: Option<Rgba>,
     local_selection_anchor: Option<u32>,
     wrap_width: Option<u32>,
     wrap_mode: u8,
@@ -58,6 +70,8 @@ impl TextBufferViewState {
         Self {
             text_buffer,
             selection: None,
+            selection_bg: None,
+            selection_fg: None,
             local_selection_anchor: None,
             wrap_width: None,
             wrap_mode: 0,
@@ -75,20 +89,26 @@ impl TextBufferViewState {
         }
     }
 
-    pub fn set_selection(&mut self, start: u32, end: u32) {
+    pub fn set_selection(&mut self, start: u32, end: u32, bg: Option<Rgba>, fg: Option<Rgba>) {
         self.selection = normalize_selection(start, end);
+        self.selection_bg = bg;
+        self.selection_fg = fg;
         self.local_selection_anchor = Some(start);
     }
 
-    pub fn update_selection(&mut self, end: u32) {
+    pub fn update_selection(&mut self, end: u32, bg: Option<Rgba>, fg: Option<Rgba>) {
         let anchor = self
             .local_selection_anchor
             .or_else(|| self.selection.map(|(start, _)| start));
         self.selection = anchor.and_then(|start| normalize_selection(start, end));
+        self.selection_bg = bg;
+        self.selection_fg = fg;
     }
 
     pub fn reset_selection(&mut self) {
         self.selection = None;
+        self.selection_bg = None;
+        self.selection_fg = None;
         self.local_selection_anchor = None;
     }
 
@@ -98,15 +118,42 @@ impl TextBufferViewState {
         anchor_y: i32,
         focus_x: i32,
         focus_y: i32,
+        bg: Option<Rgba>,
+        fg: Option<Rgba>,
     ) -> bool {
-        let Some(anchor) = self.visual_coords_to_offset(anchor_x, anchor_y) else {
-            return false;
+        let lines = self.compute_virtual_lines(false);
+        let max_y = i32::try_from(lines.len()).unwrap_or(i32::MAX) - 1;
+        let anchor_above = anchor_y < 0;
+        let focus_above = focus_y < 0;
+        let anchor_below = anchor_y > max_y;
+        let focus_below = focus_y > max_y;
+
+        if (anchor_above && focus_above) || (anchor_below && focus_below) {
+            let had_selection = self.selection.is_some();
+            self.selection = None;
+            self.local_selection_anchor = None;
+            return had_selection;
+        }
+
+        let text_end_offset = self.text_end_offset();
+        let Some(anchor) = self.selection_offset_for_coords(anchor_x, anchor_y, text_end_offset)
+        else {
+            let had_selection = self.selection.is_some();
+            self.selection = None;
+            self.local_selection_anchor = None;
+            return had_selection;
         };
-        let Some(focus) = self.visual_coords_to_offset(focus_x, focus_y) else {
-            return false;
+        let Some(focus) = self.selection_offset_for_coords(focus_x, focus_y, text_end_offset)
+        else {
+            let had_selection = self.selection.is_some();
+            self.selection = None;
+            self.local_selection_anchor = None;
+            return had_selection;
         };
         self.local_selection_anchor = Some(anchor);
         self.selection = normalize_selection(anchor, focus);
+        self.selection_bg = bg;
+        self.selection_fg = fg;
         true
     }
 
@@ -116,18 +163,33 @@ impl TextBufferViewState {
         anchor_y: i32,
         focus_x: i32,
         focus_y: i32,
+        bg: Option<Rgba>,
+        fg: Option<Rgba>,
     ) -> bool {
+        let text_end_offset = self.text_end_offset();
         let anchor = self
             .local_selection_anchor
-            .or_else(|| self.visual_coords_to_offset(anchor_x, anchor_y));
+            .or_else(|| self.selection_offset_for_coords(anchor_x, anchor_y, text_end_offset));
         let Some(anchor) = anchor else {
             return false;
         };
-        let Some(focus) = self.visual_coords_to_offset(focus_x, focus_y) else {
+        let Some(focus) = self.selection_offset_for_coords(focus_x, focus_y, text_end_offset)
+        else {
             return false;
         };
         self.local_selection_anchor = Some(anchor);
-        self.selection = normalize_selection(anchor, focus);
+        let start = anchor.min(focus);
+        let mut end = anchor.max(focus);
+        if focus < anchor {
+            end = end.saturating_add(1).min(text_end_offset);
+        }
+        self.selection = if start == end {
+            None
+        } else {
+            Some((start, end))
+        };
+        self.selection_bg = bg;
+        self.selection_fg = fg;
         true
     }
 
@@ -183,6 +245,71 @@ impl TextBufferViewState {
             Some((start, end)) => self.buffer().text_range(start, end).into_bytes(),
             None => Vec::new(),
         }
+    }
+
+    pub(crate) fn visible_lines(&self) -> Vec<VisibleLine> {
+        let lines = self.compute_virtual_lines(false);
+        if lines.is_empty() {
+            return Vec::new();
+        }
+
+        let start = usize::try_from(self.viewport_y).unwrap_or(0);
+        let height = if self.viewport_height == 0 {
+            lines.len().saturating_sub(start)
+        } else {
+            usize::try_from(self.viewport_height).unwrap_or(0)
+        };
+        let end = lines.len().min(start.saturating_add(height.max(1)));
+
+        (start..end)
+            .map(|index| {
+                let line = lines[index];
+                let next_start = lines
+                    .get(index + 1)
+                    .map(|next| next.start_offset)
+                    .unwrap_or(line.start_offset.saturating_add(line.width_cols));
+                let (selection_start, selection_end) = match self.selection {
+                    Some((start_offset, end_offset)) => {
+                        let start_offset = start_offset.max(line.start_offset);
+                        let end_offset = end_offset.min(next_start);
+                        if start_offset < end_offset {
+                            (Some(start_offset), Some(end_offset))
+                        } else {
+                            (None, None)
+                        }
+                    }
+                    None => (None, None),
+                };
+
+                VisibleLine {
+                    viewport_row: u32::try_from(index.saturating_sub(start)).unwrap_or(u32::MAX),
+                    start_offset: line.start_offset,
+                    end_offset: next_start,
+                    selection_start,
+                    selection_end,
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn text_for_offsets(&self, start: u32, end: u32) -> String {
+        self.buffer().text_range(start, end)
+    }
+
+    pub(crate) fn selection_colors(&self) -> (Option<Rgba>, Option<Rgba>) {
+        (self.selection_bg, self.selection_fg)
+    }
+
+    pub(crate) fn default_fg(&self) -> Option<Rgba> {
+        self.buffer().default_fg()
+    }
+
+    pub(crate) fn default_bg(&self) -> Option<Rgba> {
+        self.buffer().default_bg()
+    }
+
+    pub(crate) fn tab_width(&self) -> u8 {
+        self.buffer().tab_width()
     }
 
     pub fn virtual_line_count(&self) -> u32 {
@@ -312,8 +439,32 @@ impl TextBufferViewState {
         Some(self.snap_visual_offset(*line, visual_col.min(line.width_cols)))
     }
 
+    fn selection_offset_for_coords(&self, x: i32, y: i32, text_end_offset: u32) -> Option<u32> {
+        let lines = self.compute_virtual_lines(false);
+        if lines.is_empty() {
+            return Some(0);
+        }
+
+        let max_y = i32::try_from(lines.len()).unwrap_or(i32::MAX) - 1;
+        if y < 0 || x < 0 {
+            return Some(0);
+        }
+        if y > max_y {
+            return Some(text_end_offset);
+        }
+        self.visual_coords_to_offset(x, y)
+    }
+
     fn compute_virtual_lines(&self, logical_only: bool) -> Vec<VirtualLine> {
         self.compute_virtual_lines_with_width(logical_only, self.wrap_width)
+    }
+
+    fn text_end_offset(&self) -> u32 {
+        let lines = self.compute_virtual_lines(false);
+        lines
+            .last()
+            .map(|line| line.start_offset.saturating_add(line.width_cols))
+            .unwrap_or(0)
     }
 
     fn snap_visual_offset(&self, line: VirtualLine, visual_col: u32) -> u32 {
@@ -392,6 +543,47 @@ impl TextBufferViewState {
 
                     for token in line.split_inclusive(char::is_whitespace) {
                         let token_width = text_width(token, tab_width);
+                        if token_width > wrap_width {
+                            if current_col > segment_start_col {
+                                let end_col = last_break_col.unwrap_or(current_col);
+                                virtual_lines.push(VirtualLine {
+                                    start_offset: line_start.saturating_add(segment_start_col),
+                                    width_cols: end_col.saturating_sub(segment_start_col),
+                                    source_line: source_line as u32,
+                                    wrap_index,
+                                });
+                                wrap_index = wrap_index.saturating_add(1);
+                                segment_start_col = end_col;
+                                current_col = end_col;
+                                last_break_col = None;
+                            }
+
+                            for ch in token.chars() {
+                                let width = char_weight(ch, tab_width);
+                                if current_col > segment_start_col
+                                    && current_col
+                                        .saturating_sub(segment_start_col)
+                                        .saturating_add(width)
+                                        > wrap_width
+                                {
+                                    virtual_lines.push(VirtualLine {
+                                        start_offset: line_start.saturating_add(segment_start_col),
+                                        width_cols: current_col.saturating_sub(segment_start_col),
+                                        source_line: source_line as u32,
+                                        wrap_index,
+                                    });
+                                    wrap_index = wrap_index.saturating_add(1);
+                                    segment_start_col = current_col;
+                                }
+
+                                current_col = current_col.saturating_add(width);
+                                if ch.is_whitespace() {
+                                    last_break_col = Some(current_col);
+                                }
+                            }
+                            continue;
+                        }
+
                         if current_col > 0 && current_col.saturating_add(token_width) > wrap_width {
                             let end_col = last_break_col.unwrap_or(current_col);
                             virtual_lines.push(VirtualLine {
@@ -471,7 +663,7 @@ mod tests {
         let mut view = TextBufferViewState::new(&mut buffer);
         assert_eq!(view.selection_info(), NO_SELECTION);
 
-        view.set_selection(6, 11);
+        view.set_selection(6, 11, None, None);
         assert_eq!(view.selection_info(), ((6_u64) << 32) | 11_u64);
         assert_eq!(view.selected_text_bytes(), b"World");
 
@@ -501,7 +693,7 @@ mod tests {
         assert_eq!(measure.line_count, 3);
         assert_eq!(measure.width_cols_max, 4);
 
-        assert!(view.set_local_selection(0, 0, 5, 1));
+        assert!(view.set_local_selection(0, 0, 5, 1, None, None));
         assert!(!view.selected_text_bytes().is_empty());
         view.reset_local_selection();
         assert_eq!(view.selection_info(), NO_SELECTION);

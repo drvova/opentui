@@ -37,6 +37,9 @@ const __dirname = dirname(__filename)
 const rootDir = resolve(__dirname, "..")
 const licensePath = path.resolve(__dirname, "../../../LICENSE")
 const packageJson: PackageJson = JSON.parse(readFileSync(join(rootDir, "package.json"), "utf8"))
+const packageNameParts = packageJson.name.split("/")
+const packageScope = packageNameParts.length > 1 ? packageNameParts[0] : null
+const packageBaseName = packageNameParts[packageNameParts.length - 1]
 
 const args = process.argv.slice(2)
 const buildLib = args.find((arg) => arg === "--lib")
@@ -175,6 +178,7 @@ if (buildNative) {
   const requestedVariants = resolveVariants()
   const profileDir = isDev ? "debug" : "release"
   const nativeDirRoot = join(rootDir, "node_modules", "@opentui")
+  const staleScopedOutputDir = packageScope ? join(nativeDirRoot, packageScope) : null
 
   const runOrFail = (command: string, commandArgs: string[], env?: NodeJS.ProcessEnv): void => {
     const result: SpawnSyncReturns<Buffer> = spawnSync(command, commandArgs, {
@@ -195,6 +199,10 @@ if (buildNative) {
   }
 
   for (const variant of requestedVariants) {
+    if (staleScopedOutputDir) {
+      rmSync(staleScopedOutputDir, { recursive: true, force: true })
+    }
+
     const rustupArgs = ["target", "add", variant.rustTarget]
     runOrFail("rustup", rustupArgs)
 
@@ -213,8 +221,9 @@ if (buildNative) {
     console.log(`Building Rust native ${isDev ? "dev" : "prod"} library for ${variant.platform}-${variant.arch}...`)
     runOrFail("cargo", cargoArgs, buildEnv)
 
-    const nativeName = `${packageJson.name}-${variant.platform}-${variant.arch}`
-    const nativeDir = join(nativeDirRoot, nativeName)
+    const nativeDirName = `${packageBaseName}-${variant.platform}-${variant.arch}`
+    const nativePackageName = packageScope ? `${packageScope}/${nativeDirName}` : nativeDirName
+    const nativeDir = join(nativeDirRoot, nativeDirName)
     const src = join(rootDir, "native", "target", variant.rustTarget, profileDir, variant.libraryFileName)
 
     if (!existsSync(src)) {
@@ -236,7 +245,7 @@ export default path;
       join(nativeDir, "package.json"),
       JSON.stringify(
         {
-          name: nativeName,
+          name: nativePackageName,
           version: packageJson.version,
           description: `Prebuilt ${variant.platform}-${variant.arch} binaries for ${packageJson.name}`,
           main: "index.ts",
@@ -257,11 +266,13 @@ export default path;
 
     writeFileSync(
       join(nativeDir, "README.md"),
-      replaceLinks(`## ${nativeName}\n\n> Prebuilt ${variant.platform}-${variant.arch} binaries for \`${packageJson.name}\`.`),
+      replaceLinks(
+        `## ${nativePackageName}\n\n> Prebuilt ${variant.platform}-${variant.arch} binaries for \`${packageJson.name}\`.`,
+      ),
     )
 
     if (existsSync(licensePath)) copyFileSync(licensePath, join(nativeDir, "LICENSE"))
-    console.log("Built:", nativeName)
+    console.log("Built:", nativePackageName)
   }
 }
 

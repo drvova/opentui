@@ -82,6 +82,22 @@ impl EditBufferState {
         self.text_buffer.plain_text_bytes()
     }
 
+    pub fn text_str(&self) -> &str {
+        self.text_buffer.text_str()
+    }
+
+    pub fn tab_width(&self) -> u8 {
+        self.text_buffer.tab_width()
+    }
+
+    pub fn default_fg(&self) -> Option<crate::text_buffer::Rgba> {
+        self.text_buffer.default_fg()
+    }
+
+    pub fn default_bg(&self) -> Option<crate::text_buffer::Rgba> {
+        self.text_buffer.default_bg()
+    }
+
     pub fn clear(&mut self) {
         if self.text_buffer.text_str().is_empty() {
             self.cursor_offset = 0;

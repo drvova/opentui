@@ -53,7 +53,7 @@ impl TextBufferState {
             default_attributes: None,
             syntax_style: None,
             line_highlights: Vec::new(),
-            tab_width: 4,
+            tab_width: 2,
         }
     }
 
@@ -99,6 +99,14 @@ impl TextBufferState {
         self.default_attributes = attributes;
     }
 
+    pub fn default_fg(&self) -> Option<Rgba> {
+        self.default_fg
+    }
+
+    pub fn default_bg(&self) -> Option<Rgba> {
+        self.default_bg
+    }
+
     pub fn set_syntax_style(&mut self, style: Option<*const SyntaxStyleState>) {
         self.syntax_style = style;
     }
@@ -114,7 +122,12 @@ impl TextBufferState {
     }
 
     pub fn set_tab_width(&mut self, width: u8) {
-        self.tab_width = width.max(1);
+        let width = width.max(2);
+        self.tab_width = if width % 2 == 0 {
+            width
+        } else {
+            width.saturating_add(1)
+        };
     }
 
     pub fn register_mem_buffer(&mut self, data: &[u8]) -> Result<u8, ()> {
@@ -639,7 +652,7 @@ fn slice_by_weight_offsets(
     text[start_byte..end_byte].to_string()
 }
 
-fn char_weight(ch: char, tab_width: u8) -> u32 {
+pub(crate) fn char_weight(ch: char, tab_width: u8) -> u32 {
     match ch {
         '\r' => 0,
         '\n' => 1,

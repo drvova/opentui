@@ -140,6 +140,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     this._contentChangeListener = options.onContentChange
 
     this.editBuffer.on("cursor-changed", () => {
+      this.syncViewportToCursor()
       if (this._cursorChangeListener) {
         const cursor = this.editBuffer.getCursorPosition()
         this._cursorChangeListener({
@@ -151,6 +152,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
     this.editBuffer.on("content-changed", () => {
       this.yogaNode.markDirty()
+      this.syncViewportToCursor()
       this.requestRender()
       this.emit("line-info-change")
       if (this._contentChangeListener) {
@@ -391,6 +393,46 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
   protected onResize(width: number, height: number): void {
     this.editorView.setViewportSize(width, height)
+    this.syncViewportToCursor()
+  }
+
+  protected syncViewportToCursor(): void {
+    const viewport = this.editorView.getViewport()
+    if (viewport.width <= 0 || viewport.height <= 0) {
+      return
+    }
+
+    const cursor = this.editorView.getVisualCursor()
+    const totalVirtualLines = this.editorView.getTotalVirtualLineCount()
+    const maxOffsetY = Math.max(0, totalVirtualLines - viewport.height)
+    const marginY = Math.max(0, Math.floor(viewport.height * this._scrollMargin))
+    const edgeMarginY = Math.max(1, marginY)
+
+    let offsetY = viewport.offsetY
+    if (cursor.visualRow < offsetY + marginY) {
+      offsetY = Math.max(0, cursor.visualRow - marginY)
+    } else if (cursor.visualRow >= offsetY + viewport.height - edgeMarginY) {
+      offsetY = Math.min(maxOffsetY, cursor.visualRow - viewport.height + edgeMarginY + 1)
+    }
+
+    let offsetX = viewport.offsetX
+    if (this._wrapMode === "none") {
+      const maxOffsetX = Math.max(0, this.lineInfo.lineWidthColsMax - viewport.width)
+      const marginX = Math.max(0, Math.floor(viewport.width * this._scrollMargin))
+      const edgeMarginX = Math.max(1, marginX)
+
+      if (cursor.visualCol < offsetX + marginX) {
+        offsetX = Math.max(0, cursor.visualCol - marginX)
+      } else if (cursor.visualCol >= offsetX + viewport.width - edgeMarginX) {
+        offsetX = Math.min(maxOffsetX, cursor.visualCol - viewport.width + edgeMarginX + 1)
+      }
+    } else {
+      offsetX = 0
+    }
+
+    if (offsetX !== viewport.offsetX || offsetY !== viewport.offsetY) {
+      this.editorView.setViewport(offsetX, offsetY, viewport.width, viewport.height, false)
+    }
   }
 
   protected refreshLocalSelection(): boolean {

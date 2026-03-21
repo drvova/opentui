@@ -1,5 +1,13 @@
 use crate::{Rgba, optimized_buffer::OptimizedBuffer, terminal_state::TerminalState};
 
+#[derive(Clone, Copy, Debug)]
+struct ClipRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DebugOverlayState {
     pub enabled: bool,
@@ -37,6 +45,7 @@ pub struct RendererState {
     hit_grid_width: u32,
     hit_grid_height: u32,
     hit_grid_dirty: bool,
+    hit_grid_scissor_stack: Vec<ClipRect>,
 }
 
 impl RendererState {
@@ -61,6 +70,7 @@ impl RendererState {
             hit_grid_width: width,
             hit_grid_height: height,
             hit_grid_dirty: false,
+            hit_grid_scissor_stack: Vec::new(),
         }
     }
 
@@ -82,6 +92,7 @@ impl RendererState {
         self.hit_grid_height = height;
         self.current_hit_grid = vec![0; usize::try_from(width.saturating_mul(height)).unwrap_or(0)];
         self.hit_grid_dirty = true;
+        self.hit_grid_scissor_stack.clear();
     }
 
     pub fn render(&mut self) {
@@ -120,7 +131,10 @@ impl RendererState {
         height: u32,
         id: u32,
     ) {
-        self.add_to_hit_grid(x, y, width, height, id);
+        let Some(rect) = self.clip_rect(x, y, width, height) else {
+            return;
+        };
+        self.add_to_hit_grid(rect.x, rect.y, rect.width, rect.height, id);
     }
 
     pub fn check_hit(&self, x: u32, y: u32) -> u32 {
@@ -141,6 +155,79 @@ impl RendererState {
     }
 
     pub fn clear_global_link_pool(&mut self) {}
+
+    pub fn push_hit_grid_scissor_rect(&mut self, x: i32, y: i32, width: u32, height: u32) {
+        let next = if let Some(current) = self.hit_grid_scissor_stack.last().copied() {
+            intersect_rects(
+                current,
+                ClipRect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+            )
+        } else {
+            Some(ClipRect {
+                x,
+                y,
+                width,
+                height,
+            })
+        };
+
+        self.hit_grid_scissor_stack.push(next.unwrap_or(ClipRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        }));
+    }
+
+    pub fn pop_hit_grid_scissor_rect(&mut self) {
+        let _ = self.hit_grid_scissor_stack.pop();
+    }
+
+    pub fn clear_hit_grid_scissor_rects(&mut self) {
+        self.hit_grid_scissor_stack.clear();
+    }
+
+    fn clip_rect(&self, x: i32, y: i32, width: u32, height: u32) -> Option<ClipRect> {
+        let rect = ClipRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let bounds = ClipRect {
+            x: 0,
+            y: 0,
+            width: self.hit_grid_width,
+            height: self.hit_grid_height,
+        };
+        let clipped = intersect_rects(rect, bounds)?;
+        match self.hit_grid_scissor_stack.last().copied() {
+            Some(scissor) => intersect_rects(clipped, scissor),
+            None => Some(clipped),
+        }
+    }
+}
+
+fn intersect_rects(left: ClipRect, right: ClipRect) -> Option<ClipRect> {
+    let x1 = left.x.max(right.x);
+    let y1 = left.y.max(right.y);
+    let x2 = (left.x + left.width as i32).min(right.x + right.width as i32);
+    let y2 = (left.y + left.height as i32).min(right.y + right.height as i32);
+    if x2 <= x1 || y2 <= y1 {
+        return None;
+    }
+
+    Some(ClipRect {
+        x: x1,
+        y: y1,
+        width: (x2 - x1) as u32,
+        height: (y2 - y1) as u32,
+    })
 }
 
 #[cfg(test)]

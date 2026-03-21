@@ -435,7 +435,12 @@ export class TextareaRenderable extends EditBufferRenderable {
   }
 
   public gotoLine(line: number): void {
+    const lineCount = this.editBuffer.getLineCount()
     this.editBuffer.gotoLine(line)
+    if (lineCount > 0 && line >= lineCount) {
+      const eol = this.editBuffer.getEOL()
+      this.editBuffer.setCursor(eol.row, eol.col)
+    }
     this.requestRender()
   }
 
@@ -509,7 +514,14 @@ export class TextareaRenderable extends EditBufferRenderable {
   public gotoBufferEnd(options?: { select?: boolean }): boolean {
     const select = options?.select ?? false
     this.updateSelectionForMovement(select, true)
-    this.editBuffer.gotoLine(999999)
+    const lineCount = this.editBuffer.getLineCount()
+    if (lineCount > 0) {
+      this.editBuffer.gotoLine(lineCount - 1)
+      const eol = this.editBuffer.getEOL()
+      this.editBuffer.setCursor(eol.row, eol.col)
+    } else {
+      this.editBuffer.setCursor(0, 0)
+    }
     this.updateSelectionForMovement(select, false)
     this.requestRender()
     return true

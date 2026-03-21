@@ -48,7 +48,7 @@ use optimized_buffer::{
 use renderer_state::RendererState;
 use syntax_style::{Rgba, SyntaxStyleState};
 use terminal_state::CursorStyleOptions as TerminalCursorStyleOptions;
-use text_buffer::{TextBufferState, copy_bytes_to_out};
+use text_buffer::{TextBufferState, copy_bytes_to_out, text_width};
 use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
 
 #[repr(C)]
@@ -796,19 +796,36 @@ pub extern "C" fn clearGlobalLinkPool() {}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn hitGridPushScissorRect(
-    _renderer: *mut NativeRenderer,
-    _x: i32,
-    _y: i32,
-    _width: u32,
-    _height: u32,
+    renderer: *mut NativeRenderer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
 ) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.push_hit_grid_scissor_rect(x, y, width, height);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hitGridPopScissorRect(_renderer: *mut NativeRenderer) {}
+pub extern "C" fn hitGridPopScissorRect(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.pop_hit_grid_scissor_rect();
+}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn hitGridClearScissorRects(_renderer: *mut NativeRenderer) {}
+pub extern "C" fn hitGridClearScissorRects(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.clear_hit_grid_scissor_rects();
+}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn opentui_rust_foundation_abi_hash() -> *const c_char {
@@ -1390,15 +1407,20 @@ pub extern "C" fn textBufferViewSetSelection(
     view: *mut NativeTextBufferView,
     start: u32,
     end: u32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) {
     if view.is_null() {
         return;
     }
 
     let view = unsafe { &mut *view };
-    view.set_selection(start, end);
+    view.set_selection(
+        start,
+        end,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -1425,15 +1447,19 @@ pub extern "C" fn textBufferViewGetSelectionInfo(view: *const NativeTextBufferVi
 pub extern "C" fn textBufferViewUpdateSelection(
     view: *mut NativeTextBufferView,
     end: u32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) {
     if view.is_null() {
         return;
     }
 
     let view = unsafe { &mut *view };
-    view.update_selection(end);
+    view.update_selection(
+        end,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -1531,15 +1557,22 @@ pub extern "C" fn textBufferViewSetLocalSelection(
     anchor_y: i32,
     focus_x: i32,
     focus_y: i32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) -> bool {
     if view.is_null() {
         return false;
     }
 
     let view = unsafe { &mut *view };
-    view.set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    view.set_local_selection(
+        anchor_x,
+        anchor_y,
+        focus_x,
+        focus_y,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -1549,15 +1582,22 @@ pub extern "C" fn textBufferViewUpdateLocalSelection(
     anchor_y: i32,
     focus_x: i32,
     focus_y: i32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) -> bool {
     if view.is_null() {
         return false;
     }
 
     let view = unsafe { &mut *view };
-    view.update_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    view.update_local_selection(
+        anchor_x,
+        anchor_y,
+        focus_x,
+        focus_y,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -2275,15 +2315,20 @@ pub extern "C" fn editorViewSetSelection(
     view: *mut NativeEditorView,
     start: u32,
     end: u32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) {
     if view.is_null() {
         return;
     }
 
     let view = unsafe { &mut *view };
-    view.set_selection(start, end);
+    view.set_selection(
+        start,
+        end,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -2310,15 +2355,19 @@ pub extern "C" fn editorViewGetSelection(view: *const NativeEditorView) -> u64 {
 pub extern "C" fn editorViewUpdateSelection(
     view: *mut NativeEditorView,
     end: u32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
 ) {
     if view.is_null() {
         return;
     }
 
     let view = unsafe { &mut *view };
-    view.update_selection(end);
+    view.update_selection(
+        end,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -3114,15 +3163,55 @@ pub extern "C" fn bufferDrawTextBufferView(
 
     let buffer = unsafe { &mut *buffer };
     let view = unsafe { &*view };
-    let text = std::str::from_utf8(view.plain_text_bytes()).unwrap_or("");
-    let _ = buffer.draw_text(
-        usize::try_from(x).unwrap_or(0),
-        usize::try_from(y).unwrap_or(0),
-        text,
-        [1.0, 1.0, 1.0, 1.0],
-        [0.0, 0.0, 0.0, 1.0],
-        0,
-    );
+    let (selection_bg, selection_fg) = view.selection_colors();
+    let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+    let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+
+    for line in view.visible_lines() {
+        let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
+        if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
+            let before = view.text_for_offsets(line.start_offset, sel_start);
+            let selected = view.text_for_offsets(sel_start, sel_end);
+            let after = view.text_for_offsets(sel_end, line.end_offset);
+            let before_width = text_width(&before, view.tab_width()) as usize;
+            let selected_width = text_width(&selected, view.tab_width()) as usize;
+
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0),
+                row,
+                &before,
+                default_fg,
+                default_bg,
+                0,
+            );
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0) + before_width,
+                row,
+                &selected,
+                selection_fg.unwrap_or(default_fg),
+                selection_bg.unwrap_or(default_fg),
+                0,
+            );
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0) + before_width + selected_width,
+                row,
+                &after,
+                default_fg,
+                default_bg,
+                0,
+            );
+        } else {
+            let text = view.text_for_offsets(line.start_offset, line.end_offset);
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0),
+                row,
+                &text,
+                default_fg,
+                default_bg,
+                0,
+            );
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -3138,15 +3227,55 @@ pub extern "C" fn bufferDrawEditorView(
 
     let buffer = unsafe { &mut *buffer };
     let view = unsafe { &*view };
-    let text = std::str::from_utf8(view.text_bytes()).unwrap_or("");
-    let _ = buffer.draw_text(
-        usize::try_from(x).unwrap_or(0),
-        usize::try_from(y).unwrap_or(0),
-        text,
-        [1.0, 1.0, 1.0, 1.0],
-        [0.0, 0.0, 0.0, 1.0],
-        0,
-    );
+    let (selection_bg, selection_fg) = view.selection_colors();
+    let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
+    let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+
+    for line in view.visible_lines() {
+        let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
+        if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
+            let before = view.text_for_offsets(line.start_offset, sel_start);
+            let selected = view.text_for_offsets(sel_start, sel_end);
+            let after = view.text_for_offsets(sel_end, line.end_offset);
+            let before_width = text_width(&before, view.tab_width()) as usize;
+            let selected_width = text_width(&selected, view.tab_width()) as usize;
+
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0),
+                row,
+                &before,
+                default_fg,
+                default_bg,
+                0,
+            );
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0) + before_width,
+                row,
+                &selected,
+                selection_fg.unwrap_or(default_fg),
+                selection_bg.unwrap_or(default_fg),
+                0,
+            );
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0) + before_width + selected_width,
+                row,
+                &after,
+                default_fg,
+                default_bg,
+                0,
+            );
+        } else {
+            let text = view.text_for_offsets(line.start_offset, line.end_offset);
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0),
+                row,
+                &text,
+                default_fg,
+                default_bg,
+                0,
+            );
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -3156,8 +3285,8 @@ pub extern "C" fn editorViewSetLocalSelection(
     anchor_y: i32,
     focus_x: i32,
     focus_y: i32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
     _update_cursor: bool,
     _follow_cursor: bool,
 ) -> bool {
@@ -3166,7 +3295,14 @@ pub extern "C" fn editorViewSetLocalSelection(
     }
 
     let view = unsafe { &mut *view };
-    view.set_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    view.set_local_selection(
+        anchor_x,
+        anchor_y,
+        focus_x,
+        focus_y,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -3176,8 +3312,8 @@ pub extern "C" fn editorViewUpdateLocalSelection(
     anchor_y: i32,
     focus_x: i32,
     focus_y: i32,
-    _bg_color: *const f32,
-    _fg_color: *const f32,
+    bg_color: *const f32,
+    fg_color: *const f32,
     _update_cursor: bool,
     _follow_cursor: bool,
 ) -> bool {
@@ -3186,7 +3322,14 @@ pub extern "C" fn editorViewUpdateLocalSelection(
     }
 
     let view = unsafe { &mut *view };
-    view.update_local_selection(anchor_x, anchor_y, focus_x, focus_y)
+    view.update_local_selection(
+        anchor_x,
+        anchor_y,
+        focus_x,
+        focus_y,
+        (!bg_color.is_null()).then(|| color_from_ptr(bg_color)),
+        (!fg_color.is_null()).then(|| color_from_ptr(fg_color)),
+    )
 }
 
 #[unsafe(no_mangle)]
