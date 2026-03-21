@@ -261,19 +261,41 @@ export enum MouseButton {
 
 const rendererTracker = singleton("RendererTracker", () => {
   const renderers = new Set<CliRenderer>()
+  let treeSitterCleanupTimeout: Timer | null = null
+
+  const cancelTreeSitterCleanup = () => {
+    if (treeSitterCleanupTimeout !== null) {
+      clearTimeout(treeSitterCleanupTimeout)
+      treeSitterCleanupTimeout = null
+    }
+  }
+
+  const scheduleTreeSitterCleanup = () => {
+    cancelTreeSitterCleanup()
+    treeSitterCleanupTimeout = setTimeout(() => {
+      treeSitterCleanupTimeout = null
+      if (renderers.size !== 0) {
+        return
+      }
+
+      process.stdin.pause()
+
+      if (hasSingleton("tree-sitter-client")) {
+        void getTreeSitterClient().destroy()
+        destroySingleton("tree-sitter-client")
+      }
+    }, 0)
+  }
+
   return {
     addRenderer: (renderer: CliRenderer) => {
+      cancelTreeSitterCleanup()
       renderers.add(renderer)
     },
     removeRenderer: (renderer: CliRenderer) => {
       renderers.delete(renderer)
       if (renderers.size === 0) {
-        process.stdin.pause()
-
-        if (hasSingleton("tree-sitter-client")) {
-          getTreeSitterClient().destroy()
-          destroySingleton("tree-sitter-client")
-        }
+        scheduleTreeSitterCleanup()
       }
     },
   }
