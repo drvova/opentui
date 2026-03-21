@@ -2,8 +2,17 @@
 
 use core::ffi::{c_char, c_uint};
 
+mod native_span_feed;
 mod syntax_style;
 
+pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
+pub type NativeSpanFeedOptions = native_span_feed::Options;
+pub type NativeSpanFeedReserveInfo = native_span_feed::ReserveInfo;
+pub type NativeSpanFeedSpanInfo = native_span_feed::SpanInfo;
+pub type NativeSpanFeedStats = native_span_feed::Stats;
+pub type NativeSpanFeedStream = native_span_feed::Stream;
+
+use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use syntax_style::{Rgba, SyntaxStyleState};
 
 const ABI_SYMBOL_COUNT: c_uint = parse_symbol_count();
@@ -132,14 +141,199 @@ pub extern "C" fn syntaxStyleGetStyleCount(style: *const SyntaxStyleState) -> us
     state.style_count()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn createNativeSpanFeed(
+    options_ptr: *const NativeSpanFeedOptions,
+) -> *mut NativeSpanFeedStream {
+    let options = if options_ptr.is_null() {
+        default_native_span_feed_options()
+    } else {
+        unsafe { *options_ptr }
+    };
+
+    match NativeSpanFeedStream::create(options) {
+        Ok(stream) => Box::into_raw(Box::new(stream)),
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn attachNativeSpanFeed(stream: *mut NativeSpanFeedStream) -> i32 {
+    if stream.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    stream
+        .attach()
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyNativeSpanFeed(stream: *mut NativeSpanFeedStream) {
+    if stream.is_null() {
+        return;
+    }
+
+    let mut stream = unsafe { Box::from_raw(stream) };
+    let _ = stream.close();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamSetCallback(
+    stream: *mut NativeSpanFeedStream,
+    callback: Option<NativeSpanFeedCallbackFn>,
+) {
+    if stream.is_null() {
+        return;
+    }
+
+    let stream = unsafe { &mut *stream };
+    stream.set_callback(callback);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamWrite(
+    stream: *mut NativeSpanFeedStream,
+    src_ptr: *const u8,
+    len: usize,
+) -> i32 {
+    if stream.is_null() || src_ptr.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    let data = unsafe { std::slice::from_raw_parts(src_ptr, len) };
+    stream
+        .write(data)
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamCommit(stream: *mut NativeSpanFeedStream) -> i32 {
+    if stream.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    stream
+        .commit()
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamDrainSpans(
+    stream: *mut NativeSpanFeedStream,
+    out_ptr: *mut NativeSpanFeedSpanInfo,
+    max_spans: u32,
+) -> u32 {
+    if stream.is_null() || out_ptr.is_null() || max_spans == 0 {
+        return 0;
+    }
+
+    let stream = unsafe { &mut *stream };
+    let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, max_spans as usize) };
+    stream.drain_spans(out)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamClose(stream: *mut NativeSpanFeedStream) -> i32 {
+    if stream.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    stream
+        .close()
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamReserve(
+    stream: *mut NativeSpanFeedStream,
+    min_len: u32,
+    out_ptr: *mut NativeSpanFeedReserveInfo,
+) -> i32 {
+    if stream.is_null() || out_ptr.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    match stream.reserve(min_len) {
+        Ok(info) => {
+            unsafe {
+                *out_ptr = info;
+            }
+            native_span_feed::status::OK
+        }
+        Err(error) => error_to_status(error),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamCommitReserved(stream: *mut NativeSpanFeedStream, len: u32) -> i32 {
+    if stream.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    stream
+        .commit_reserved(len)
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamSetOptions(
+    stream: *mut NativeSpanFeedStream,
+    options_ptr: *const NativeSpanFeedOptions,
+) -> i32 {
+    if stream.is_null() || options_ptr.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    let options = unsafe { *options_ptr };
+    stream
+        .set_options(options)
+        .map(|()| native_span_feed::status::OK)
+        .unwrap_or_else(error_to_status)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn streamGetStats(
+    stream: *mut NativeSpanFeedStream,
+    stats_ptr: *mut NativeSpanFeedStats,
+) -> i32 {
+    if stream.is_null() || stats_ptr.is_null() {
+        return native_span_feed::status::ERR_INVALID;
+    }
+
+    let stream = unsafe { &mut *stream };
+    unsafe {
+        *stats_ptr = stream.get_stats();
+    }
+    native_span_feed::status::OK
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::CStr;
 
     use super::{
-        ABI_SYMBOL_COUNT, OpentuiRustFoundationAbiInfo, createSyntaxStyle, destroySyntaxStyle,
-        opentui_rust_foundation_abi_hash, opentui_rust_foundation_abi_info,
-        syntaxStyleGetStyleCount, syntaxStyleRegister, syntaxStyleResolveByName,
+        ABI_SYMBOL_COUNT, OpentuiRustFoundationAbiInfo, attachNativeSpanFeed, createNativeSpanFeed,
+        createSyntaxStyle, destroyNativeSpanFeed, destroySyntaxStyle,
+        opentui_rust_foundation_abi_hash, opentui_rust_foundation_abi_info, streamClose,
+        streamCommit, streamDrainSpans, streamGetStats, streamWrite, syntaxStyleGetStyleCount,
+        syntaxStyleRegister, syntaxStyleResolveByName,
+    };
+    use crate::native_span_feed::{
+        SpanInfo, Stats, default_options as default_native_span_feed_options,
+        status as native_span_feed_status,
     };
 
     #[test]
@@ -234,5 +428,31 @@ mod tests {
         );
         assert_eq!(syntaxStyleGetStyleCount(core::ptr::null()), 0);
         destroySyntaxStyle(core::ptr::null_mut());
+    }
+
+    #[test]
+    fn native_span_feed_ffi_round_trip_works() {
+        let stream = createNativeSpanFeed(&default_native_span_feed_options());
+        assert_ne!(stream, core::ptr::null_mut());
+        assert_eq!(attachNativeSpanFeed(stream), native_span_feed_status::OK);
+        assert_eq!(
+            streamWrite(stream, b"hello".as_ptr(), 5),
+            native_span_feed_status::OK
+        );
+        assert_eq!(streamCommit(stream), native_span_feed_status::OK);
+
+        let mut spans = [SpanInfo::default(); 4];
+        assert_eq!(streamDrainSpans(stream, spans.as_mut_ptr(), 4), 1);
+        assert_eq!(spans[0].len, 5);
+
+        let mut stats = Stats::default();
+        assert_eq!(
+            streamGetStats(stream, &mut stats),
+            native_span_feed_status::OK
+        );
+        assert_eq!(stats.spans_committed, 1);
+
+        assert_eq!(streamClose(stream), native_span_feed_status::OK);
+        destroyNativeSpanFeed(stream);
     }
 }

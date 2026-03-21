@@ -101,7 +101,7 @@ export function extractNativeExports(source: string): string[] {
 }
 
 export function extractInlineLoaderSymbols(source: string): string[] {
-  const match = source.match(/const \w+Library = dlopen\(resolvedLibPath, \{/)
+  const match = source.match(/const \w+ = dlopen\(resolvedLibPath, \{/)
   if (!match || match.index === undefined) {
     throw new Error("Unable to find primary dlopen block in zig.ts")
   }
