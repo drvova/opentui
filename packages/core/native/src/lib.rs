@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_uint};
 mod edit_buffer;
 mod editor_view;
 mod native_span_feed;
+mod optimized_buffer;
 mod syntax_style;
 mod text_buffer;
 mod text_buffer_view;
@@ -19,6 +20,7 @@ pub type NativeSpanFeedReserveInfo = native_span_feed::ReserveInfo;
 pub type NativeSpanFeedSpanInfo = native_span_feed::SpanInfo;
 pub type NativeSpanFeedStats = native_span_feed::Stats;
 pub type NativeSpanFeedStream = native_span_feed::Stream;
+pub type NativeOptimizedBuffer = optimized_buffer::OptimizedBuffer;
 pub type NativeStyledChunk = text_buffer::StyledChunk;
 pub type NativeHighlight = text_buffer::ExternalHighlight;
 pub type NativeTextBuffer = text_buffer::TextBufferState;
@@ -29,6 +31,7 @@ pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
 use edit_buffer::EditBufferState;
 use editor_view::EditorViewState;
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
+use optimized_buffer::OptimizedBuffer;
 use syntax_style::{Rgba, SyntaxStyleState};
 use text_buffer::{TextBufferState, copy_bytes_to_out};
 use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
@@ -1654,6 +1657,162 @@ pub extern "C" fn editorViewSetTabIndicatorColor(view: *mut NativeEditorView, co
 
     let view = unsafe { &mut *view };
     view.set_tab_indicator_color(color_from_ptr(color));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createOptimizedBuffer(
+    width: u32,
+    height: u32,
+    respect_alpha: bool,
+    _width_method: u8,
+    _id_ptr: *const u8,
+    _id_len: usize,
+) -> *mut NativeOptimizedBuffer {
+    if width == 0 || height == 0 {
+        return core::ptr::null_mut();
+    }
+
+    let width = usize::try_from(width).ok();
+    let height = usize::try_from(height).ok();
+    let (Some(width), Some(height)) = (width, height) else {
+        return core::ptr::null_mut();
+    };
+
+    Box::into_raw(Box::new(OptimizedBuffer::new(width, height, respect_alpha)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyOptimizedBuffer(buffer: *mut NativeOptimizedBuffer) {
+    if buffer.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(buffer));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getBufferWidth(buffer: *const NativeOptimizedBuffer) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    u32::try_from(buffer.width()).unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn getBufferHeight(buffer: *const NativeOptimizedBuffer) -> u32 {
+    if buffer.is_null() {
+        return 0;
+    }
+
+    let buffer = unsafe { &*buffer };
+    u32::try_from(buffer.height()).unwrap_or(u32::MAX)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetCharPtr(buffer: *const NativeOptimizedBuffer) -> *const u32 {
+    if buffer.is_null() {
+        return core::ptr::null();
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.chars_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetFgPtr(buffer: *const NativeOptimizedBuffer) -> *const f32 {
+    if buffer.is_null() {
+        return core::ptr::null();
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.fg_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetBgPtr(buffer: *const NativeOptimizedBuffer) -> *const f32 {
+    if buffer.is_null() {
+        return core::ptr::null();
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.bg_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferGetAttributesPtr(buffer: *const NativeOptimizedBuffer) -> *const u32 {
+    if buffer.is_null() {
+        return core::ptr::null();
+    }
+
+    let buffer = unsafe { &*buffer };
+    buffer.attributes_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferClear(buffer: *mut NativeOptimizedBuffer, bg: *const f32) {
+    if buffer.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let bg = if bg.is_null() {
+        [0.0, 0.0, 0.0, 1.0]
+    } else {
+        color_from_ptr(bg)
+    };
+    buffer.clear_with_bg(bg);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawTextBufferView(
+    buffer: *mut NativeOptimizedBuffer,
+    view: *mut NativeTextBufferView,
+    x: i32,
+    y: i32,
+) {
+    if buffer.is_null() || view.is_null() || x < 0 || y < 0 {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let view = unsafe { &*view };
+    let text = std::str::from_utf8(view.plain_text_bytes()).unwrap_or("");
+    let _ = buffer.draw_text(
+        usize::try_from(x).unwrap_or(0),
+        usize::try_from(y).unwrap_or(0),
+        text,
+        [1.0, 1.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0],
+        0,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawEditorView(
+    buffer: *mut NativeOptimizedBuffer,
+    view: *mut NativeEditorView,
+    x: i32,
+    y: i32,
+) {
+    if buffer.is_null() || view.is_null() || x < 0 || y < 0 {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let view = unsafe { &*view };
+    let text = std::str::from_utf8(view.text_bytes()).unwrap_or("");
+    let _ = buffer.draw_text(
+        usize::try_from(x).unwrap_or(0),
+        usize::try_from(y).unwrap_or(0),
+        text,
+        [1.0, 1.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 1.0],
+        0,
+    );
 }
 
 #[unsafe(no_mangle)]

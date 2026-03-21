@@ -3,6 +3,7 @@
 pub struct OptimizedBuffer {
     width: usize,
     height: usize,
+    respect_alpha: bool,
     chars: Vec<u32>,
     fg: Vec<[f32; 4]>,
     bg: Vec<[f32; 4]>,
@@ -10,11 +11,14 @@ pub struct OptimizedBuffer {
 }
 
 impl OptimizedBuffer {
-    pub fn new(width: usize, height: usize) -> Self {
-        let cells = width.checked_mul(height).expect("OptimizedBuffer dimensions overflow");
+    pub fn new(width: usize, height: usize, respect_alpha: bool) -> Self {
+        let cells = width
+            .checked_mul(height)
+            .expect("OptimizedBuffer dimensions overflow");
         Self {
             width,
             height,
+            respect_alpha,
             chars: vec![0; cells],
             fg: vec![[0.0; 4]; cells],
             bg: vec![[0.0; 4]; cells],
@@ -47,10 +51,18 @@ impl OptimizedBuffer {
     }
 
     pub fn clear(&mut self) {
+        self.clear_with_bg([0.0, 0.0, 0.0, 1.0]);
+    }
+
+    pub fn clear_with_bg(&mut self, bg: [f32; 4]) {
         self.chars.fill(0);
         self.fg.fill([0.0; 4]);
-        self.bg.fill([0.0; 4]);
+        self.bg.fill(bg);
         self.attributes.fill(0);
+    }
+
+    pub fn respect_alpha(&self) -> bool {
+        self.respect_alpha
     }
 
     pub fn draw_text(
@@ -97,7 +109,15 @@ impl OptimizedBuffer {
         written
     }
 
-    fn set_cell(&mut self, x: usize, y: usize, codepoint: u32, fg: [f32; 4], bg: [f32; 4], attributes: u32) {
+    fn set_cell(
+        &mut self,
+        x: usize,
+        y: usize,
+        codepoint: u32,
+        fg: [f32; 4],
+        bg: [f32; 4],
+        attributes: u32,
+    ) {
         let index = self.cell_index(x, y);
         self.chars[index] = codepoint;
         self.fg[index] = fg;
@@ -106,7 +126,10 @@ impl OptimizedBuffer {
     }
 
     fn cell_index(&self, x: usize, y: usize) -> usize {
-        assert!(x < self.width && y < self.height, "cell index out of bounds");
+        assert!(
+            x < self.width && y < self.height,
+            "cell index out of bounds"
+        );
         y * self.width + x
     }
 }
@@ -116,40 +139,52 @@ mod tests {
     use super::OptimizedBuffer;
 
     fn read_chars(buffer: &OptimizedBuffer) -> Vec<u32> {
-        unsafe { std::slice::from_raw_parts(buffer.chars_ptr(), buffer.width() * buffer.height()).to_vec() }
+        unsafe {
+            std::slice::from_raw_parts(buffer.chars_ptr(), buffer.width() * buffer.height())
+                .to_vec()
+        }
     }
 
     fn read_attrs(buffer: &OptimizedBuffer) -> Vec<u32> {
-        unsafe { std::slice::from_raw_parts(buffer.attributes_ptr(), buffer.width() * buffer.height()).to_vec() }
+        unsafe {
+            std::slice::from_raw_parts(buffer.attributes_ptr(), buffer.width() * buffer.height())
+                .to_vec()
+        }
     }
 
     fn read_rgba(ptr: *const f32, cells: usize) -> Vec<[f32; 4]> {
         let slice = unsafe { std::slice::from_raw_parts(ptr, cells * 4) };
-        slice.chunks_exact(4).map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]]).collect()
+        slice
+            .chunks_exact(4)
+            .map(|chunk| [chunk[0], chunk[1], chunk[2], chunk[3]])
+            .collect()
     }
 
     #[test]
     fn clear_resets_all_grids() {
-        let mut buffer = OptimizedBuffer::new(3, 2);
+        let mut buffer = OptimizedBuffer::new(3, 2, false);
         buffer.draw_text(0, 0, "abc", [1.0, 0.0, 0.0, 1.0], [0.0, 1.0, 0.0, 1.0], 7);
         buffer.clear();
 
         assert_eq!(read_chars(&buffer), vec![0; 6]);
         assert_eq!(read_attrs(&buffer), vec![0; 6]);
         assert_eq!(read_rgba(buffer.fg_ptr(), 6), vec![[0.0; 4]; 6]);
-        assert_eq!(read_rgba(buffer.bg_ptr(), 6), vec![[0.0; 4]; 6]);
+        assert_eq!(read_rgba(buffer.bg_ptr(), 6), vec![[0.0, 0.0, 0.0, 1.0]; 6]);
     }
 
     #[test]
     fn draw_text_writes_codepoints_and_styles() {
-        let mut buffer = OptimizedBuffer::new(4, 2);
+        let mut buffer = OptimizedBuffer::new(4, 2, false);
         let fg = [0.25, 0.5, 0.75, 1.0];
         let bg = [0.1, 0.2, 0.3, 0.4];
 
         let written = buffer.draw_text(1, 0, "Aé\nZ", fg, bg, 42);
 
         assert_eq!(written, 3);
-        assert_eq!(read_chars(&buffer), vec![0, 'A' as u32, 'é' as u32, 0, 0, 'Z' as u32, 0, 0]);
+        assert_eq!(
+            read_chars(&buffer),
+            vec![0, 'A' as u32, 'é' as u32, 0, 0, 'Z' as u32, 0, 0]
+        );
         assert_eq!(read_attrs(&buffer), vec![0, 42, 42, 0, 0, 42, 0, 0]);
         assert_eq!(read_rgba(buffer.fg_ptr(), 8)[1], fg);
         assert_eq!(read_rgba(buffer.bg_ptr(), 8)[5], bg);
@@ -157,11 +192,15 @@ mod tests {
 
     #[test]
     fn draw_text_wraps_at_row_end() {
-        let mut buffer = OptimizedBuffer::new(3, 2);
+        let mut buffer = OptimizedBuffer::new(3, 2, true);
 
         let written = buffer.draw_text(2, 0, "abcd", [1.0; 4], [0.0; 4], 1);
 
         assert_eq!(written, 4);
-        assert_eq!(read_chars(&buffer), vec![0, 0, 'a' as u32, 'b' as u32, 'c' as u32, 'd' as u32]);
+        assert_eq!(
+            read_chars(&buffer),
+            vec![0, 0, 'a' as u32, 'b' as u32, 'c' as u32, 'd' as u32]
+        );
+        assert!(buffer.respect_alpha());
     }
 }
