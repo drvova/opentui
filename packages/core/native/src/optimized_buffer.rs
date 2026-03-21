@@ -4,9 +4,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    alloc_grapheme_bytes, encoded_char_width, grapheme_bytes, grapheme_id_from_char,
-    is_continuation_char, is_grapheme_char, pack_continuation, pack_grapheme_start,
-    release_grapheme_id, retain_grapheme_id,
+    alloc_grapheme_bytes, crossterm_backend::CrosstermBackend, encoded_char_width, grapheme_bytes,
+    grapheme_id_from_char, is_continuation_char, is_grapheme_char, pack_continuation,
+    pack_grapheme_start, release_grapheme_id, retain_grapheme_id,
 };
 
 pub type Rgba = [f32; 4];
@@ -280,45 +280,6 @@ fn color_to_rgb(color: Rgba) -> [u8; 3] {
 
 fn append_move_cursor(out: &mut Vec<u8>, row: u32, col: u32) {
     out.extend_from_slice(format!("\x1b[{};{}H", row.max(1), col.max(1)).as_bytes());
-}
-
-fn append_sgr(out: &mut Vec<u8>, fg: Rgba, bg: Rgba, attributes: u32) {
-    let [fg_r, fg_g, fg_b] = color_to_rgb(fg);
-    let [bg_r, bg_g, bg_b] = color_to_rgb(bg);
-    let mut codes = Vec::with_capacity(12);
-    codes.push(String::from("0"));
-
-    if attributes & (1 << 0) != 0 {
-        codes.push(String::from("1"));
-    }
-    if attributes & (1 << 1) != 0 {
-        codes.push(String::from("2"));
-    }
-    if attributes & (1 << 2) != 0 {
-        codes.push(String::from("3"));
-    }
-    if attributes & (1 << 3) != 0 {
-        codes.push(String::from("4"));
-    }
-    if attributes & (1 << 4) != 0 {
-        codes.push(String::from("5"));
-    }
-    if attributes & (1 << 5) != 0 {
-        codes.push(String::from("7"));
-    }
-    if attributes & (1 << 6) != 0 {
-        codes.push(String::from("8"));
-    }
-    if attributes & (1 << 7) != 0 {
-        codes.push(String::from("9"));
-    }
-
-    codes.push(format!("38;2;{fg_r};{fg_g};{fg_b}"));
-    codes.push(format!("48;2;{bg_r};{bg_g};{bg_b}"));
-
-    out.extend_from_slice(b"\x1b[");
-    out.extend_from_slice(codes.join(";").as_bytes());
-    out.push(b'm');
 }
 
 fn append_terminal_cell(out: &mut Vec<u8>, codepoint: u32) {
@@ -685,7 +646,7 @@ impl OptimizedBuffer {
         out
     }
 
-    pub fn write_ansi_frame(&self, out: &mut Vec<u8>, start_row: u32) {
+    pub fn write_ansi_frame(&self, out: &mut Vec<u8>, start_row: u32, backend: &CrosstermBackend) {
         let mut last_style: Option<(Rgba, Rgba, u32)> = None;
 
         for row in 0..self.height {
@@ -705,7 +666,12 @@ impl OptimizedBuffer {
                 );
 
                 if last_style != Some(style) {
-                    append_sgr(out, style.0, style.1, style.2);
+                    backend.append_colors(
+                        out,
+                        color_to_rgb(style.0),
+                        color_to_rgb(style.1),
+                        style.2,
+                    );
                     last_style = Some(style);
                 }
 
@@ -713,7 +679,7 @@ impl OptimizedBuffer {
             }
         }
 
-        out.extend_from_slice(b"\x1b[0m");
+        backend.append_reset(out);
     }
 
     pub fn draw_frame_buffer(

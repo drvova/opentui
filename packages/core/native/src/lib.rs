@@ -7,6 +7,7 @@ use std::sync::{Mutex, OnceLock};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+mod crossterm_backend;
 mod edit_buffer;
 mod editor_view;
 mod native_span_feed;
