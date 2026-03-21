@@ -427,7 +427,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     const marginY = Math.max(0, Math.floor(viewport.height * this._scrollMargin))
     const edgeMarginY = Math.min(Math.max(0, viewport.height - 1), marginY)
 
-    let offsetY = viewport.offsetY
+    let offsetY = Math.max(0, Math.min(viewport.offsetY, maxOffsetY))
     if (cursor.visualRow < offsetY + marginY) {
       offsetY = Math.max(0, cursor.visualRow - marginY)
     } else if (cursor.visualRow >= offsetY + viewport.height - edgeMarginY) {
@@ -439,6 +439,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
       const maxOffsetX = Math.max(0, this.lineInfo.lineWidthColsMax - viewport.width)
       const marginX = Math.max(0, Math.floor(viewport.width * this._scrollMargin))
       const edgeMarginX = Math.min(Math.max(0, viewport.width - 1), marginX)
+      offsetX = Math.max(0, Math.min(offsetX, maxOffsetX))
 
       if (cursor.visualCol < offsetX + marginX) {
         offsetX = Math.max(0, cursor.visualCol - marginX)

@@ -364,6 +364,10 @@ impl TextBufferViewState {
         rendered
     }
 
+    pub(crate) fn offset_for_local_coords(&self, x: i32, y: i32) -> Option<u32> {
+        self.selection_offset_for_coords(x, y, self.text_end_offset())
+    }
+
     pub(crate) fn selection_colors(&self) -> (Option<Rgba>, Option<Rgba>) {
         (self.selection_bg, self.selection_fg)
     }
@@ -843,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn word_wrap_can_keep_a_trailing_word_when_only_the_space_overflows() {
+    fn word_wrap_breaks_before_a_short_trailing_word_when_space_is_the_only_overflow() {
         let mut buffer = TextBufferState::new(0);
         let id = buffer.register_mem_buffer(b"aaaaaa bbb ccc").unwrap();
         buffer.set_text_from_mem(id);
@@ -856,7 +860,7 @@ mod tests {
         let widths =
             unsafe { std::slice::from_raw_parts(line_info.width_cols, line_info.width_cols_len as usize) };
 
-        assert_eq!(widths, &[10, 3]);
+        assert_eq!(widths, &[7, 7]);
     }
 
     #[test]

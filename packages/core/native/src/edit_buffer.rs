@@ -203,16 +203,13 @@ impl EditBufferState {
     }
 
     pub fn goto_line(&mut self, line: u32) {
-        if line == 0
-            || line_start_offset(
-                self.text_buffer.text_str(),
-                self.text_buffer.tab_width(),
-                line,
-            )
-            .is_some()
-        {
-            self.set_cursor_to_line_col(line, 0);
+        let line_count = self.text_buffer.line_count();
+        if line_count == 0 {
+            self.set_cursor_to_line_col(0, 0);
+            return;
         }
+
+        self.set_cursor_to_line_col(line.min(line_count.saturating_sub(1)), 0);
     }
 
     pub fn insert_text(&mut self, data: &[u8]) {
@@ -240,6 +237,10 @@ impl EditBufferState {
             self.text_buffer.tab_width(),
             self.cursor_offset,
         );
+        if previous == self.cursor_offset {
+            return;
+        }
+        self.store_undo();
         self.cursor_offset = self
             .text_buffer
             .delete_range_by_offsets(previous, self.cursor_offset);
@@ -251,6 +252,10 @@ impl EditBufferState {
             self.text_buffer.tab_width(),
             self.cursor_offset,
         );
+        if next == self.cursor_offset {
+            return;
+        }
+        self.store_undo();
         self.cursor_offset = self
             .text_buffer
             .delete_range_by_offsets(self.cursor_offset, next);

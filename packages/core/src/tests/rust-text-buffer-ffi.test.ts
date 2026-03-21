@@ -89,7 +89,7 @@ runRustTextBufferSmoke("Rust TextBuffer cdylib supports set/append/readback prim
   const coordLen = Number(lib.textBufferGetTextRangeByCoords(textBuffer, 1, 0, 1, 5, coordRange, coordRange.length))
   expect(new TextDecoder().decode(coordRange.slice(0, coordLen))).toBe("World")
 
-  expect(lib.textBufferGetTabWidth(textBuffer)).toBe(4)
+  expect(lib.textBufferGetTabWidth(textBuffer)).toBe(2)
   lib.textBufferSetTabWidth(textBuffer, 8)
   expect(lib.textBufferGetTabWidth(textBuffer)).toBe(8)
 

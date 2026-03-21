@@ -162,7 +162,11 @@ impl EditorViewState {
             .text_buffer_view
             .set_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg);
         if changed && update_cursor {
-            self.update_cursor_to_selection_focus();
+            if self.selection_range().is_some() {
+                self.update_cursor_to_selection_focus();
+            } else if let Some(offset) = self.text_buffer_view.offset_for_local_coords(focus_x, focus_y) {
+                self.edit_buffer_mut().set_cursor_by_offset(offset);
+            }
         }
         changed
     }
@@ -185,7 +189,11 @@ impl EditorViewState {
             .text_buffer_view
             .update_local_selection(anchor_x, anchor_y, focus_x, focus_y, bg, fg);
         if changed && update_cursor {
-            self.update_cursor_to_selection_focus();
+            if self.selection_range().is_some() {
+                self.update_cursor_to_selection_focus();
+            } else if let Some(offset) = self.text_buffer_view.offset_for_local_coords(focus_x, focus_y) {
+                self.edit_buffer_mut().set_cursor_by_offset(offset);
+            }
         }
         changed
     }

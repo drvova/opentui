@@ -360,15 +360,7 @@ export class TextareaRenderable extends EditBufferRenderable {
       const start = this.editBuffer.offsetToPosition(selection.start)
       const end = this.editBuffer.offsetToPosition(selection.end)
       if (start && end) {
-        let deleteEnd = end
-        if (start.row === end.row && start.col === 0) {
-          const lineText = this.editBuffer.getTextRangeByCoords(start.row, 0, start.row + 1, 0)
-          const selectedText = this.getSelectedText()
-          if (lineText === `${selectedText}\n`) {
-            deleteEnd = { row: start.row + 1, col: 0 }
-          }
-        }
-        this.editBuffer.deleteRange(start.row, start.col, deleteEnd.row, deleteEnd.col)
+        this.editBuffer.deleteRange(start.row, start.col, end.row, end.col)
       } else {
         this.editorView.deleteSelectedText()
       }
@@ -619,6 +611,7 @@ export class TextareaRenderable extends EditBufferRenderable {
   }
 
   public undo(): boolean {
+    this.editorView.resetLocalSelection()
     this._ctx.clearSelection()
     this.editBuffer.undo()
     this.requestRender()
@@ -626,6 +619,7 @@ export class TextareaRenderable extends EditBufferRenderable {
   }
 
   public redo(): boolean {
+    this.editorView.resetLocalSelection()
     this._ctx.clearSelection()
     this.editBuffer.redo()
     this.requestRender()
