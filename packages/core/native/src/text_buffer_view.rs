@@ -622,7 +622,10 @@ impl TextBufferViewState {
                     let mut last_break_kind = None;
                     let mut wrap_index = 0_u32;
 
-                    for token in line.split_inclusive(is_wrap_break) {
+                    let tokens: Vec<&str> = line.split_inclusive(is_wrap_break).collect();
+                    for (token_index, token) in tokens.iter().enumerate() {
+                        let token = *token;
+                        let has_more_tokens = token_index + 1 < tokens.len();
                         let token_width = text_width(token, tab_width);
                         if token_width > wrap_width {
                             if current_col > segment_start_col {
@@ -696,6 +699,26 @@ impl TextBufferViewState {
                                 continue;
                             }
 
+                            let end_col = last_break_col.unwrap_or(current_col);
+                            virtual_lines.push(VirtualLine {
+                                start_offset: line_start.saturating_add(segment_start_col),
+                                width_cols: end_col.saturating_sub(segment_start_col),
+                                source_line: source_line as u32,
+                                wrap_index,
+                            });
+                            wrap_index = wrap_index.saturating_add(1);
+                            segment_start_col = end_col;
+                            current_col = end_col;
+                            last_break_col = None;
+                            last_break_kind = None;
+                        }
+
+                        if segment_width > 0
+                            && segment_width.saturating_add(token_width) == wrap_width
+                            && has_more_tokens
+                            && last_break_col.is_some()
+                            && last_break_kind == Some(BreakKind::Whitespace)
+                        {
                             let end_col = last_break_col.unwrap_or(current_col);
                             virtual_lines.push(VirtualLine {
                                 start_offset: line_start.saturating_add(segment_start_col),
