@@ -677,11 +677,13 @@ impl TextBufferViewState {
                         let segment_width = current_col.saturating_sub(segment_start_col);
                         if segment_width > 0 && segment_width.saturating_add(token_width) > wrap_width {
                             let trailing_ws_width = trailing_whitespace_width(token, tab_width);
+                            let token_body_width = token_width.saturating_sub(trailing_ws_width);
                             if trailing_ws_width > 0
                                 && last_break_col == Some(current_col)
                                 && last_break_kind == Some(BreakKind::Whitespace)
+                                && token_body_width >= 5
                                 && segment_width
-                                    .saturating_add(token_width.saturating_sub(trailing_ws_width))
+                                    .saturating_add(token_body_width)
                                     <= wrap_width
                             {
                                 let end_col = current_col + token_width - trailing_ws_width;
