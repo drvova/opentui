@@ -96,9 +96,21 @@ link_in_bun_cache() {
     done
 }
 
+resolve_package_link_source() {
+    local package_dir="$1"
+    local dist_dir="$package_dir/dist"
+
+    if [ -f "$dist_dir/package.json" ]; then
+        echo "$dist_dir"
+        return 0
+    fi
+
+    echo "$package_dir"
+}
+
 # Always link @opentui/core
 echo "Linking @opentui/core..."
-link_in_bun_cache "@opentui+core@*" "@opentui/core" "$OPENTUI_ROOT/packages/core"
+link_in_bun_cache "@opentui+core@*" "@opentui/core" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/core")"
 
 # Link yoga-layout (required by core)
 echo "Linking yoga-layout..."
@@ -123,7 +135,7 @@ fi
 # Link @opentui/solid if requested
 if [ "$LINK_SOLID" = true ]; then
     echo "Linking @opentui/solid..."
-    link_in_bun_cache "@opentui+solid@*" "@opentui/solid" "$OPENTUI_ROOT/packages/solid"
+    link_in_bun_cache "@opentui+solid@*" "@opentui/solid" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/solid")"
     
     # Link solid-js
     echo "Linking solid-js..."
@@ -139,7 +151,7 @@ fi
 # Link @opentui/react if requested
 if [ "$LINK_REACT" = true ]; then
     echo "Linking @opentui/react..."
-    link_in_bun_cache "@opentui+react@*" "@opentui/react" "$OPENTUI_ROOT/packages/react"
+    link_in_bun_cache "@opentui+react@*" "@opentui/react" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/react")"
     
     # Link react dependencies
     echo "Linking react..."
