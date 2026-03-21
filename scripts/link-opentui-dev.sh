@@ -108,9 +108,26 @@ resolve_package_link_source() {
     echo "$package_dir"
 }
 
+ensure_local_dependency_link() {
+    local package_dir="$1"
+    local dependency_name="$2"
+    local dependency_source="$3"
+    local dependency_target="$package_dir/node_modules/$dependency_name"
+    local dependency_parent
+    dependency_parent="$(dirname "$dependency_target")"
+
+    mkdir -p "$dependency_parent"
+    if [ -e "$dependency_target" ] || [ -L "$dependency_target" ]; then
+        rm -rf "$dependency_target"
+    fi
+    ln -s "$dependency_source" "$dependency_target"
+}
+
+CORE_LINK_SOURCE="$(resolve_package_link_source "$OPENTUI_ROOT/packages/core")"
+
 # Always link @opentui/core
 echo "Linking @opentui/core..."
-link_in_bun_cache "@opentui+core@*" "@opentui/core" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/core")"
+link_in_bun_cache "@opentui+core@*" "@opentui/core" "$CORE_LINK_SOURCE"
 
 # Link yoga-layout (required by core)
 echo "Linking yoga-layout..."
@@ -134,8 +151,10 @@ fi
 
 # Link @opentui/solid if requested
 if [ "$LINK_SOLID" = true ]; then
+    SOLID_LINK_SOURCE="$(resolve_package_link_source "$OPENTUI_ROOT/packages/solid")"
     echo "Linking @opentui/solid..."
-    link_in_bun_cache "@opentui+solid@*" "@opentui/solid" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/solid")"
+    link_in_bun_cache "@opentui+solid@*" "@opentui/solid" "$SOLID_LINK_SOURCE"
+    ensure_local_dependency_link "$SOLID_LINK_SOURCE" "@opentui/core" "$CORE_LINK_SOURCE"
     
     # Link solid-js
     echo "Linking solid-js..."
@@ -150,8 +169,10 @@ fi
 
 # Link @opentui/react if requested
 if [ "$LINK_REACT" = true ]; then
+    REACT_LINK_SOURCE="$(resolve_package_link_source "$OPENTUI_ROOT/packages/react")"
     echo "Linking @opentui/react..."
-    link_in_bun_cache "@opentui+react@*" "@opentui/react" "$(resolve_package_link_source "$OPENTUI_ROOT/packages/react")"
+    link_in_bun_cache "@opentui+react@*" "@opentui/react" "$REACT_LINK_SOURCE"
+    ensure_local_dependency_link "$REACT_LINK_SOURCE" "@opentui/core" "$CORE_LINK_SOURCE"
     
     # Link react dependencies
     echo "Linking react..."
