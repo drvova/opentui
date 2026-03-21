@@ -160,7 +160,9 @@ fn resolve_line_style(
         .unwrap_or(0);
 
     if style_id != 0 {
-        if let Some(style) = syntax_style.and_then(|syntax_style| syntax_style.resolve_by_id(style_id)) {
+        if let Some(style) =
+            syntax_style.and_then(|syntax_style| syntax_style.resolve_by_id(style_id))
+        {
             if let Some(style_fg) = style.fg {
                 fg = style_fg;
             }
@@ -192,9 +194,11 @@ fn collect_line_boundaries(line: &VisibleLine, spans: &[StyleSpan]) -> Vec<u32> 
         let start = line
             .line_start_offset()
             .saturating_add(span.col.max(line.source_col_start).min(line.source_col_end));
-        let end = line
-            .line_start_offset()
-            .saturating_add(span.next_col.max(line.source_col_start).min(line.source_col_end));
+        let end = line.line_start_offset().saturating_add(
+            span.next_col
+                .max(line.source_col_start)
+                .min(line.source_col_end),
+        );
         if start < end {
             boundaries.push(start);
             boundaries.push(end);
@@ -221,7 +225,8 @@ fn clip_visible_line(line: &VisibleLine, viewport_x: u32, viewport_width: u32) -
     let start_offset = line
         .start_offset
         .saturating_add(clipped_source_start.saturating_sub(line.source_col_start));
-    let end_offset = start_offset.saturating_add(clipped_source_end.saturating_sub(clipped_source_start));
+    let end_offset =
+        start_offset.saturating_add(clipped_source_end.saturating_sub(clipped_source_start));
 
     VisibleLine {
         source_col_start: clipped_source_start,
@@ -248,11 +253,14 @@ fn draw_truncated_line(
     tab_width: u8,
     viewport_width: u32,
 ) {
-    let visible_width = viewport_width.min(line.source_col_end.saturating_sub(line.source_col_start));
+    let visible_width =
+        viewport_width.min(line.source_col_end.saturating_sub(line.source_col_start));
     if visible_width == 0 {
         return;
     }
-    if visible_width <= 3 || line.source_col_end.saturating_sub(line.source_col_start) <= visible_width {
+    if visible_width <= 3
+        || line.source_col_end.saturating_sub(line.source_col_start) <= visible_width
+    {
         draw_visible_line(
             buffer,
             text_at,
@@ -305,7 +313,8 @@ fn draw_truncated_line(
     let hidden_end = suffix_line.start_offset;
     let mut ellipsis_fg = default_fg;
     let mut ellipsis_bg = default_bg;
-    if let (Some(selection_start), Some(selection_end)) = (line.selection_start, line.selection_end) {
+    if let (Some(selection_start), Some(selection_end)) = (line.selection_start, line.selection_end)
+    {
         if selection_start < hidden_end && selection_end > hidden_start {
             if let Some(selection_bg) = selection_bg {
                 ellipsis_bg = selection_bg;
@@ -314,13 +323,24 @@ fn draw_truncated_line(
                 }
             } else {
                 (ellipsis_fg, ellipsis_bg) = (
-                    if default_bg[3] > 0.0 { default_bg } else { [0.0, 0.0, 0.0, 1.0] },
+                    if default_bg[3] > 0.0 {
+                        default_bg
+                    } else {
+                        [0.0, 0.0, 0.0, 1.0]
+                    },
                     default_fg,
                 );
             }
         }
     }
-    let _ = buffer.draw_text(x + prefix_cols as usize, row, "...", ellipsis_fg, ellipsis_bg, default_attributes);
+    let _ = buffer.draw_text(
+        x + prefix_cols as usize,
+        row,
+        "...",
+        ellipsis_fg,
+        ellipsis_bg,
+        default_attributes,
+    );
 
     draw_visible_line(
         buffer,
@@ -369,10 +389,18 @@ fn draw_visible_line(
         }
 
         let segment_col = start.saturating_sub(line.line_start_offset());
-        let (mut fg, mut bg, attributes) =
-            resolve_line_style(syntax_style, spans, segment_col, default_fg, default_bg, default_attributes);
+        let (mut fg, mut bg, attributes) = resolve_line_style(
+            syntax_style,
+            spans,
+            segment_col,
+            default_fg,
+            default_bg,
+            default_attributes,
+        );
 
-        if let (Some(selection_start), Some(selection_end)) = (line.selection_start, line.selection_end) {
+        if let (Some(selection_start), Some(selection_end)) =
+            (line.selection_start, line.selection_end)
+        {
             if selection_start <= start && end <= selection_end {
                 if let Some(selection_bg) = selection_bg {
                     bg = selection_bg;
@@ -381,7 +409,11 @@ fn draw_visible_line(
                     }
                 } else {
                     (fg, bg) = (
-                        if bg[3] > 0.0 { bg } else { [0.0, 0.0, 0.0, 1.0] },
+                        if bg[3] > 0.0 {
+                            bg
+                        } else {
+                            [0.0, 0.0, 0.0, 1.0]
+                        },
                         fg,
                     );
                 }
@@ -594,14 +626,16 @@ pub extern "C" fn freeUnicode(ptr: *const NativeEncodedChar, len: usize) {
 pub extern "C" fn createRenderer(
     width: u32,
     height: u32,
-    _testing: bool,
+    testing: bool,
     _remote: bool,
 ) -> *mut NativeRenderer {
     if width == 0 || height == 0 {
         return core::ptr::null_mut();
     }
 
-    Box::into_raw(Box::new(RendererState::new(width, height)))
+    Box::into_raw(Box::new(RendererState::new_with_terminal_output(
+        width, height, !testing,
+    )))
 }
 
 #[unsafe(no_mangle)]

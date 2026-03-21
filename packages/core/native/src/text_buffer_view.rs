@@ -1,8 +1,8 @@
+use crate::syntax_style::SyntaxStyleState;
 use crate::text_buffer::{
     Rgba, StyleSpan, TextBufferState, char_weight, copy_bytes_to_out, line_start_offset,
     next_offset, text_width,
 };
-use crate::syntax_style::SyntaxStyleState;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -57,21 +57,34 @@ fn is_wrap_break(ch: char) -> bool {
     ch.is_whitespace()
         || matches!(
             ch,
-            '-' | '/' | '\\' | '.' | ',' | ';' | ':' | '!' | '?' | '(' | ')' | '[' | ']'
-                | '{' | '}'
+            '-' | '/'
+                | '\\'
+                | '.'
+                | ','
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
                 | '\u{00A0}'
                 | '\u{1680}'
-                | '\u{2000}'..='\u{200A}'
-                | '\u{202F}'
-                | '\u{205F}'
-                | '\u{3000}'
-                | '\u{200B}'
-                | '\u{00AD}'
-                | '\u{2010}'
-                | '\u{3001}'
-                | '\u{3002}'
-                | '\u{FF01}'
-                | '\u{FF1F}'
+                | '\u{2000}'
+                ..='\u{200A}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{3000}'
+                    | '\u{200B}'
+                    | '\u{00AD}'
+                    | '\u{2010}'
+                    | '\u{3001}'
+                    | '\u{3002}'
+                    | '\u{FF01}'
+                    | '\u{FF1F}'
         )
 }
 
@@ -386,10 +399,7 @@ impl TextBufferViewState {
         }
 
         let mut rendered = String::with_capacity(text.len());
-        let indicator = self
-            .tab_indicator
-            .and_then(char::from_u32)
-            .unwrap_or(' ');
+        let indicator = self.tab_indicator.and_then(char::from_u32).unwrap_or(' ');
         let tab_width = usize::from(self.buffer().tab_width().max(1));
 
         for ch in text.chars() {
@@ -727,7 +737,8 @@ impl TextBufferViewState {
                         let token_width = text_width(token, tab_width);
                         let next_token_body_width = if has_more_tokens {
                             let next_token = tokens[token_index + 1];
-                            let next_trailing_ws_width = trailing_whitespace_width(next_token, tab_width);
+                            let next_trailing_ws_width =
+                                trailing_whitespace_width(next_token, tab_width);
                             text_width(next_token, tab_width).saturating_sub(next_trailing_ws_width)
                         } else {
                             0
@@ -785,7 +796,9 @@ impl TextBufferViewState {
                         }
 
                         let segment_width = current_col.saturating_sub(segment_start_col);
-                        if segment_width > 0 && segment_width.saturating_add(token_width) > wrap_width {
+                        if segment_width > 0
+                            && segment_width.saturating_add(token_width) > wrap_width
+                        {
                             if wrap_width <= 10
                                 && last_break_col == Some(current_col)
                                 && last_break_kind == Some(BreakKind::Whitespace)
@@ -800,8 +813,10 @@ impl TextBufferViewState {
                                             > wrap_width
                                     {
                                         virtual_lines.push(VirtualLine {
-                                            start_offset: line_start.saturating_add(segment_start_col),
-                                            width_cols: current_col.saturating_sub(segment_start_col),
+                                            start_offset: line_start
+                                                .saturating_add(segment_start_col),
+                                            width_cols: current_col
+                                                .saturating_sub(segment_start_col),
                                             source_line: source_line as u32,
                                             wrap_index,
                                         });
@@ -832,9 +847,7 @@ impl TextBufferViewState {
                                 && token_body_width == 6
                                 && next_token_body_width <= 3
                                 && segment_width >= wrap_width / 2
-                                && segment_width
-                                    .saturating_add(token_body_width)
-                                    <= wrap_width
+                                && segment_width.saturating_add(token_body_width) <= wrap_width
                             {
                                 let end_col = current_col + token_width - trailing_ws_width;
                                 virtual_lines.push(VirtualLine {
@@ -1029,8 +1042,9 @@ mod tests {
         view.set_wrap_width(10);
 
         let line_info = view.line_info();
-        let widths =
-            unsafe { std::slice::from_raw_parts(line_info.width_cols, line_info.width_cols_len as usize) };
+        let widths = unsafe {
+            std::slice::from_raw_parts(line_info.width_cols, line_info.width_cols_len as usize)
+        };
 
         assert_eq!(widths, &[7, 7]);
     }
@@ -1055,8 +1069,14 @@ mod tests {
 
         assert_eq!(widths, &[23, 21]);
         assert_eq!(starts, &[0, 23]);
-        assert_eq!(view.text_for_offsets(0, 23), "Shift+W to toggle wrap ");
-        assert_eq!(view.text_for_offsets(23, 44), "mode (word/char/none)");
+        assert_eq!(
+            view.rendered_text_for_offsets(0, 23),
+            "Shift+W to toggle wrap "
+        );
+        assert_eq!(
+            view.rendered_text_for_offsets(23, 44),
+            "mode (word/char/none)"
+        );
     }
 
     #[test]

@@ -1,4 +1,7 @@
 use std::collections::HashMap;
+use std::io::{self, Write};
+
+use crate::optimized_buffer::OptimizedBuffer;
 
 pub type Rgba = [f32; 4];
 
@@ -148,9 +151,15 @@ pub struct TerminalState {
     writes: Vec<u8>,
     alternate_screen: bool,
     suspended: bool,
+    terminal_ready: bool,
+    stdout_passthrough: bool,
 }
 
 impl TerminalState {
+    pub fn set_stdout_passthrough(&mut self, enabled: bool) {
+        self.stdout_passthrough = enabled;
+    }
+
     pub fn set_cursor_position(&mut self, x: i32, y: i32, visible: bool) {
         self.cursor.x = x.max(1) as u32;
         self.cursor.y = y.max(1) as u32;
@@ -192,24 +201,43 @@ impl TerminalState {
 
     pub fn enable_kitty_keyboard(&mut self, flags: u8) {
         self.set_kitty_keyboard_flags(flags);
+        if self.terminal_ready && !self.suspended {
+            let mut out = Vec::new();
+            append_kitty_keyboard_push(&mut out, flags);
+            self.emit(&out);
+        }
     }
 
     pub fn disable_kitty_keyboard(&mut self) {
+        if self.terminal_ready && !self.suspended && self.kitty_keyboard_flags != 0 {
+            self.emit(b"\x1b[<u");
+        }
         self.set_kitty_keyboard_flags(0);
     }
 
     pub fn enable_mouse(&mut self, enable_movement: bool) {
         self.mouse_enabled = true;
         self.mouse_movement = enable_movement;
+        if self.terminal_ready && !self.suspended {
+            self.emit(mouse_enable_sequence(enable_movement));
+        }
     }
 
     pub fn disable_mouse(&mut self) {
         self.mouse_enabled = false;
         self.mouse_movement = false;
+        if self.terminal_ready && !self.suspended {
+            self.emit(mouse_disable_sequence());
+        }
     }
 
     pub fn set_terminal_title(&mut self, title: &[u8]) {
         self.title = String::from_utf8_lossy(title).into_owned();
+        if self.terminal_ready && !self.suspended {
+            let mut out = Vec::new();
+            append_title_sequence(&mut out, self.title.as_bytes());
+            self.emit(&out);
+        }
     }
 
     pub fn set_terminal_env_var(&mut self, key: &[u8], value: &[u8]) -> bool {
@@ -220,39 +248,68 @@ impl TerminalState {
     pub fn setup_terminal(&mut self, use_alternate_screen: bool) {
         self.alternate_screen = use_alternate_screen;
         self.suspended = false;
+        self.terminal_ready = true;
+        self.emit_setup_sequence(true);
     }
 
     pub fn suspend(&mut self) {
+        if self.terminal_ready && !self.suspended {
+            self.emit_teardown_sequence(false);
+        }
         self.suspended = true;
     }
 
     pub fn resume(&mut self) {
+        if self.terminal_ready && self.suspended {
+            self.emit_setup_sequence(false);
+        }
         self.suspended = false;
     }
 
     pub fn restore_terminal_modes(&mut self) {
-        self.suspended = false;
-        self.mouse_enabled = false;
-        self.mouse_movement = false;
-        self.kitty_keyboard_flags = 0;
-        self.capabilities.kitty_keyboard = false;
+        if !self.terminal_ready || self.suspended {
+            return;
+        }
+        self.emit_active_modes(false);
     }
 
     pub fn clear_terminal(&mut self) {
         self.writes.clear();
+        if self.terminal_ready && !self.suspended {
+            self.emit(b"\x1b[2J\x1b[H");
+        }
     }
 
     pub fn write_out(&mut self, data: &[u8]) {
-        self.writes.extend_from_slice(data);
+        self.emit(data);
+    }
+
+    pub fn teardown_terminal(&mut self) {
+        if !self.terminal_ready {
+            return;
+        }
+        self.emit_teardown_sequence(true);
+        self.terminal_ready = false;
+        self.suspended = false;
     }
 
     pub fn copy_to_clipboard_osc52(&mut self, target: u8, payload: &[u8]) -> bool {
         self.clipboard.insert(target, payload.to_vec());
+        if self.terminal_ready && !self.suspended {
+            let mut out = Vec::new();
+            append_osc52_sequence(&mut out, target, payload);
+            self.emit(&out);
+        }
         true
     }
 
     pub fn clear_clipboard_osc52(&mut self, target: u8) -> bool {
         self.clipboard.remove(&target);
+        if self.terminal_ready && !self.suspended {
+            let mut out = Vec::new();
+            append_osc52_sequence(&mut out, target, b"");
+            self.emit(&out);
+        }
         true
     }
 
@@ -309,6 +366,9 @@ impl TerminalState {
 
     pub fn query_pixel_resolution(&mut self) {
         self.capabilities.sgr_pixels = true;
+        if self.terminal_ready && !self.suspended {
+            self.emit(b"\x1b[14t");
+        }
     }
 
     pub fn set_hyperlinks_capability(&mut self, enabled: bool) {
@@ -339,6 +399,174 @@ impl TerminalState {
             term_from_xtversion: self.capabilities.term_from_xtversion,
         }
     }
+
+    pub fn render_frame(&mut self, buffer: &OptimizedBuffer, render_offset: u32) {
+        if !self.terminal_ready || self.suspended {
+            return;
+        }
+
+        let mut out = Vec::new();
+        out.extend_from_slice(b"\x1b[?25l");
+        buffer.write_ansi_frame(&mut out, render_offset.saturating_add(1));
+        self.append_cursor_sequence(&mut out, render_offset);
+        self.emit(&out);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn captured_writes(&self) -> &[u8] {
+        &self.writes
+    }
+
+    fn emit_setup_sequence(&mut self, clear_screen: bool) {
+        let mut out = Vec::new();
+        if self.alternate_screen {
+            out.extend_from_slice(b"\x1b[?1049h");
+        }
+        self.emit_active_modes_into(&mut out, clear_screen);
+        self.emit(&out);
+    }
+
+    fn emit_active_modes(&mut self, clear_screen: bool) {
+        let mut out = Vec::new();
+        self.emit_active_modes_into(&mut out, clear_screen);
+        self.emit(&out);
+    }
+
+    fn emit_active_modes_into(&self, out: &mut Vec<u8>, clear_screen: bool) {
+        out.extend_from_slice(b"\x1b[?1004h\x1b[?2004h");
+        if self.mouse_enabled {
+            out.extend_from_slice(mouse_enable_sequence(self.mouse_movement));
+        }
+        if self.kitty_keyboard_flags != 0 {
+            append_kitty_keyboard_push(out, self.kitty_keyboard_flags);
+        }
+        if !self.title.is_empty() {
+            append_title_sequence(out, self.title.as_bytes());
+        }
+        if clear_screen {
+            out.extend_from_slice(b"\x1b[2J\x1b[H");
+        }
+        self.append_cursor_sequence(out, 0);
+    }
+
+    fn emit_teardown_sequence(&mut self, leave_alt_screen: bool) {
+        let mut out = Vec::new();
+        out.extend_from_slice(mouse_disable_sequence());
+        if self.kitty_keyboard_flags != 0 {
+            out.extend_from_slice(b"\x1b[<u");
+        }
+        out.extend_from_slice(b"\x1b[?2004l\x1b[?1004l\x1b[?25h");
+        if leave_alt_screen && self.alternate_screen {
+            out.extend_from_slice(b"\x1b[?1049l");
+        }
+        self.emit(&out);
+    }
+
+    fn append_cursor_sequence(&self, out: &mut Vec<u8>, render_offset: u32) {
+        append_cursor_style_sequence(out, self.cursor.style, self.cursor.blinking);
+        if self.cursor.visible {
+            append_cursor_color_sequence(
+                out,
+                [self.cursor.r, self.cursor.g, self.cursor.b, self.cursor.a],
+            );
+            append_move_cursor(
+                out,
+                render_offset.saturating_add(self.cursor.y),
+                self.cursor.x.max(1),
+            );
+            out.extend_from_slice(b"\x1b[?25h");
+        } else {
+            out.extend_from_slice(b"\x1b[?25l");
+        }
+    }
+
+    fn emit(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+
+        self.writes.extend_from_slice(data);
+        if !self.stdout_passthrough {
+            return;
+        }
+
+        let mut stdout = io::stdout().lock();
+        if let Err(error) = stdout.write_all(data).and_then(|_| stdout.flush()) {
+            eprintln!("opentui native stdout flush failed: {error}");
+            self.stdout_passthrough = false;
+        }
+    }
+}
+
+fn mouse_enable_sequence(enable_movement: bool) -> &'static [u8] {
+    if enable_movement {
+        b"\x1b[?1003h\x1b[?1006h"
+    } else {
+        b"\x1b[?1002h\x1b[?1006h"
+    }
+}
+
+fn mouse_disable_sequence() -> &'static [u8] {
+    b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?1016l"
+}
+
+fn append_move_cursor(out: &mut Vec<u8>, row: u32, col: u32) {
+    out.extend_from_slice(format!("\x1b[{};{}H", row.max(1), col.max(1)).as_bytes());
+}
+
+fn append_title_sequence(out: &mut Vec<u8>, title: &[u8]) {
+    out.extend_from_slice(b"\x1b]2;");
+    out.extend_from_slice(title);
+    out.extend_from_slice(b"\x1b\\");
+}
+
+fn append_kitty_keyboard_push(out: &mut Vec<u8>, flags: u8) {
+    out.extend_from_slice(format!("\x1b[>{flags}u").as_bytes());
+}
+
+fn append_cursor_style_sequence(out: &mut Vec<u8>, style: u8, blinking: bool) {
+    let code = match style {
+        0 => Some(if blinking { 1 } else { 2 }),
+        1 => Some(if blinking { 5 } else { 6 }),
+        2 => Some(if blinking { 3 } else { 4 }),
+        _ => None,
+    };
+
+    if let Some(code) = code {
+        out.extend_from_slice(format!("\x1b[{code} q").as_bytes());
+    }
+}
+
+fn append_cursor_color_sequence(out: &mut Vec<u8>, color: Rgba) {
+    if color[3] <= 0.0 {
+        return;
+    }
+
+    let [r, g, b] = color_to_rgb(color);
+    out.extend_from_slice(format!("\x1b]12;#{r:02x}{g:02x}{b:02x}\x1b\\").as_bytes());
+}
+
+fn append_osc52_sequence(out: &mut Vec<u8>, target: u8, payload: &[u8]) {
+    let selector = match target {
+        1 => b"p".as_slice(),
+        2 => b"q".as_slice(),
+        3 => b"?".as_slice(),
+        _ => b"c".as_slice(),
+    };
+
+    out.extend_from_slice(b"\x1b]52;");
+    out.extend_from_slice(selector);
+    out.extend_from_slice(b";");
+    out.extend_from_slice(payload);
+    out.extend_from_slice(b"\x1b\\");
+}
+
+fn color_to_rgb(color: Rgba) -> [u8; 3] {
+    [
+        (color[0].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (color[1].clamp(0.0, 1.0) * 255.0).round() as u8,
+        (color[2].clamp(0.0, 1.0) * 255.0).round() as u8,
+    ]
 }
 
 #[cfg(test)]
@@ -380,5 +608,26 @@ mod tests {
         assert!(caps.sync);
         assert!(caps.sgr_pixels);
         assert!(caps.hyperlinks);
+    }
+
+    #[test]
+    fn setup_and_restore_emit_terminal_sequences() {
+        let mut terminal = TerminalState::default();
+        terminal.set_terminal_title(b"OpenTUI");
+        terminal.enable_mouse(true);
+        terminal.enable_kitty_keyboard(0b111);
+        terminal.setup_terminal(true);
+        terminal.restore_terminal_modes();
+        terminal.teardown_terminal();
+
+        let output = String::from_utf8_lossy(terminal.captured_writes());
+        assert!(output.contains("\x1b[?1049h"));
+        assert!(output.contains("\x1b[?1004h"));
+        assert!(output.contains("\x1b[?2004h"));
+        assert!(output.contains("\x1b[>7u"));
+        assert!(output.contains("\x1b[?1003h"));
+        assert!(output.contains("\x1b]2;OpenTUI\x1b\\"));
+        assert!(output.contains("\x1b[<u"));
+        assert!(output.contains("\x1b[?1049l"));
     }
 }

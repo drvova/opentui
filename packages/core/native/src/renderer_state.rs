@@ -50,16 +50,22 @@ pub struct RendererState {
 
 impl RendererState {
     pub fn new(width: u32, height: u32) -> Self {
+        Self::new_with_terminal_output(width, height, false)
+    }
+
+    pub fn new_with_terminal_output(width: u32, height: u32, stdout_passthrough: bool) -> Self {
         let current_buffer = Box::new(OptimizedBuffer::new(width as usize, height as usize, false));
         let next_buffer = Box::new(OptimizedBuffer::new(width as usize, height as usize, false));
         let hit_cells = usize::try_from(width.saturating_mul(height)).unwrap_or(0);
+        let mut terminal = TerminalState::default();
+        terminal.set_stdout_passthrough(stdout_passthrough);
 
         Self {
             width,
             height,
             current_buffer,
             next_buffer,
-            terminal: TerminalState::default(),
+            terminal,
             background_color: [0.0, 0.0, 0.0, 1.0],
             render_offset: 0,
             use_thread: false,
@@ -97,6 +103,8 @@ impl RendererState {
 
     pub fn render(&mut self) {
         self.current_buffer.copy_from(&self.next_buffer);
+        self.terminal
+            .render_frame(&self.current_buffer, self.render_offset);
     }
 
     pub fn add_to_hit_grid(&mut self, x: i32, y: i32, width: u32, height: u32, id: u32) {
@@ -213,6 +221,12 @@ impl RendererState {
     }
 }
 
+impl Drop for RendererState {
+    fn drop(&mut self) {
+        self.terminal.teardown_terminal();
+    }
+}
+
 fn intersect_rects(left: ClipRect, right: ClipRect) -> Option<ClipRect> {
     let x1 = left.x.max(right.x);
     let y1 = left.y.max(right.y);
@@ -253,5 +267,20 @@ mod tests {
         renderer.resize(8, 4);
         assert_eq!(renderer.hit_grid_width, 8);
         assert_eq!(renderer.hit_grid_height, 4);
+    }
+
+    #[test]
+    fn render_flushes_terminal_frame_once_terminal_is_setup() {
+        let mut renderer = RendererState::new(4, 2);
+        renderer.terminal.setup_terminal(false);
+        renderer
+            .next_buffer
+            .draw_text(0, 0, "Hi", [1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0], 0);
+
+        renderer.render();
+
+        let output = String::from_utf8_lossy(renderer.terminal.captured_writes());
+        assert!(output.contains("\x1b[1;1H"));
+        assert!(output.contains("Hi"));
     }
 }

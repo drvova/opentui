@@ -53,7 +53,7 @@ runRustRendererCoreSmoke("Rust renderer core APIs expose buffers and hit-grid st
     bufferGetCharPtr: { args: ["ptr"], returns: "ptr" },
   }).symbols
 
-  const renderer = lib.createRenderer(4, 2, false, false)
+  const renderer = lib.createRenderer(4, 2, true, false)
   expect(renderer).not.toBeNull()
   lib.setUseThread(renderer, true)
   lib.setBackgroundColor(renderer, new Float32Array([0, 0, 1, 1]))

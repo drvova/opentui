@@ -53,7 +53,7 @@ runRustTerminalCoreSmoke("Rust terminal core APIs are stateful through the rende
     setHyperlinksCapability: { args: ["ptr", "bool"], returns: "void" },
   }).symbols
 
-  const renderer = lib.createRenderer(10, 5, false, false)
+  const renderer = lib.createRenderer(10, 5, true, false)
   expect(renderer).not.toBeNull()
 
   lib.setCursorPosition(renderer, 4, 2, true)

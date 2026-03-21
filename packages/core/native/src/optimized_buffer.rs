@@ -256,6 +256,94 @@ fn grayscale_char(intensity: f32) -> u32 {
     GRAYSCALE_CHARS[index] as u32
 }
 
+fn normalize_terminal_color(color: Rgba, fallback: Rgba) -> Rgba {
+    let alpha = clamp01(color[3]);
+    if alpha >= 1.0 {
+        return [clamp01(color[0]), clamp01(color[1]), clamp01(color[2]), 1.0];
+    }
+
+    [
+        clamp01(color[0] * alpha + fallback[0] * (1.0 - alpha)),
+        clamp01(color[1] * alpha + fallback[1] * (1.0 - alpha)),
+        clamp01(color[2] * alpha + fallback[2] * (1.0 - alpha)),
+        1.0,
+    ]
+}
+
+fn color_to_rgb(color: Rgba) -> [u8; 3] {
+    [
+        (clamp01(color[0]) * 255.0).round() as u8,
+        (clamp01(color[1]) * 255.0).round() as u8,
+        (clamp01(color[2]) * 255.0).round() as u8,
+    ]
+}
+
+fn append_move_cursor(out: &mut Vec<u8>, row: u32, col: u32) {
+    out.extend_from_slice(format!("\x1b[{};{}H", row.max(1), col.max(1)).as_bytes());
+}
+
+fn append_sgr(out: &mut Vec<u8>, fg: Rgba, bg: Rgba, attributes: u32) {
+    let [fg_r, fg_g, fg_b] = color_to_rgb(fg);
+    let [bg_r, bg_g, bg_b] = color_to_rgb(bg);
+    let mut codes = Vec::with_capacity(12);
+    codes.push(String::from("0"));
+
+    if attributes & (1 << 0) != 0 {
+        codes.push(String::from("1"));
+    }
+    if attributes & (1 << 1) != 0 {
+        codes.push(String::from("2"));
+    }
+    if attributes & (1 << 2) != 0 {
+        codes.push(String::from("3"));
+    }
+    if attributes & (1 << 3) != 0 {
+        codes.push(String::from("4"));
+    }
+    if attributes & (1 << 4) != 0 {
+        codes.push(String::from("5"));
+    }
+    if attributes & (1 << 5) != 0 {
+        codes.push(String::from("7"));
+    }
+    if attributes & (1 << 6) != 0 {
+        codes.push(String::from("8"));
+    }
+    if attributes & (1 << 7) != 0 {
+        codes.push(String::from("9"));
+    }
+
+    codes.push(format!("38;2;{fg_r};{fg_g};{fg_b}"));
+    codes.push(format!("48;2;{bg_r};{bg_g};{bg_b}"));
+
+    out.extend_from_slice(b"\x1b[");
+    out.extend_from_slice(codes.join(";").as_bytes());
+    out.push(b'm');
+}
+
+fn append_terminal_cell(out: &mut Vec<u8>, codepoint: u32) {
+    if is_grapheme_char(codepoint) {
+        if let Some(bytes) = grapheme_bytes(grapheme_id_from_char(codepoint)) {
+            out.extend_from_slice(&bytes);
+        } else {
+            out.push(b' ');
+        }
+        return;
+    }
+
+    if codepoint == 0 {
+        out.push(b' ');
+        return;
+    }
+
+    if let Some(chr) = char::from_u32(codepoint) {
+        let mut buf = [0_u8; 4];
+        out.extend_from_slice(chr.encode_utf8(&mut buf).as_bytes());
+    } else {
+        out.push(b' ');
+    }
+}
+
 fn apply_matrix(matrix: &[f32; 16], color: Rgba, strength: f32) -> Rgba {
     let r = color[0];
     let g = color[1];
@@ -597,6 +685,37 @@ impl OptimizedBuffer {
         out
     }
 
+    pub fn write_ansi_frame(&self, out: &mut Vec<u8>, start_row: u32) {
+        let mut last_style: Option<(Rgba, Rgba, u32)> = None;
+
+        for row in 0..self.height {
+            append_move_cursor(out, start_row.saturating_add(row as u32), 1);
+
+            for col in 0..self.width {
+                let index = self.cell_index(col, row);
+                let codepoint = self.chars[index];
+                if is_continuation_char(codepoint) {
+                    continue;
+                }
+
+                let style = (
+                    normalize_terminal_color(self.fg[index], DEFAULT_FG),
+                    normalize_terminal_color(self.bg[index], DEFAULT_BG),
+                    get_base_attributes(self.attributes[index]),
+                );
+
+                if last_style != Some(style) {
+                    append_sgr(out, style.0, style.1, style.2);
+                    last_style = Some(style);
+                }
+
+                append_terminal_cell(out, codepoint);
+            }
+        }
+
+        out.extend_from_slice(b"\x1b[0m");
+    }
+
     pub fn draw_frame_buffer(
         &mut self,
         dest_x: i32,
@@ -636,7 +755,8 @@ impl OptimizedBuffer {
 
         let dest_width = (end_dest_x - start_dest_x + 1) as u32;
         let dest_height = (end_dest_y - start_dest_y + 1) as u32;
-        let Some(clipped) = self.clip_rect(start_dest_x, start_dest_y, dest_width, dest_height) else {
+        let Some(clipped) = self.clip_rect(start_dest_x, start_dest_y, dest_width, dest_height)
+        else {
             return;
         };
 
@@ -701,7 +821,14 @@ impl OptimizedBuffer {
                         attributes,
                     );
                 } else {
-                    self.write_cell(dest_col as usize, dest_row as usize, codepoint, fg, bg, attributes);
+                    self.write_cell(
+                        dest_col as usize,
+                        dest_row as usize,
+                        codepoint,
+                        fg,
+                        bg,
+                        attributes,
+                    );
                 }
             }
         }
@@ -1009,7 +1136,11 @@ impl OptimizedBuffer {
         let is_at_actual_bottom = end_y == y + height as i32 - 1;
 
         if should_fill {
-            if !border_sides.top && !border_sides.right && !border_sides.bottom && !border_sides.left {
+            if !border_sides.top
+                && !border_sides.right
+                && !border_sides.bottom
+                && !border_sides.left
+            {
                 self.fill_rect(
                     start_x as usize,
                     start_y as usize,
@@ -1018,10 +1149,30 @@ impl OptimizedBuffer {
                     background_color,
                 );
             } else {
-                let inner_start_x = start_x + if border_sides.left && is_at_actual_left { 1 } else { 0 };
-                let inner_start_y = start_y + if border_sides.top && is_at_actual_top { 1 } else { 0 };
-                let inner_end_x = end_x - if border_sides.right && is_at_actual_right { 1 } else { 0 };
-                let inner_end_y = end_y - if border_sides.bottom && is_at_actual_bottom { 1 } else { 0 };
+                let inner_start_x = start_x
+                    + if border_sides.left && is_at_actual_left {
+                        1
+                    } else {
+                        0
+                    };
+                let inner_start_y = start_y
+                    + if border_sides.top && is_at_actual_top {
+                        1
+                    } else {
+                        0
+                    };
+                let inner_end_x = end_x
+                    - if border_sides.right && is_at_actual_right {
+                        1
+                    } else {
+                        0
+                    };
+                let inner_end_y = end_y
+                    - if border_sides.bottom && is_at_actual_bottom {
+                        1
+                    } else {
+                        0
+                    };
 
                 if inner_end_x >= inner_start_x && inner_end_y >= inner_start_y {
                     self.fill_rect(
@@ -1080,25 +1231,42 @@ impl OptimizedBuffer {
             }
         }
 
-        let left_border_only = border_sides.left && is_at_actual_left && !border_sides.top && !border_sides.bottom;
+        let left_border_only =
+            border_sides.left && is_at_actual_left && !border_sides.top && !border_sides.bottom;
         let right_border_only =
             border_sides.right && is_at_actual_right && !border_sides.top && !border_sides.bottom;
-        let bottom_only_with_verticals =
-            border_sides.bottom && is_at_actual_bottom && !border_sides.top && (border_sides.left || border_sides.right);
-        let top_only_with_verticals =
-            border_sides.top && is_at_actual_top && !border_sides.bottom && (border_sides.left || border_sides.right);
-        let extend_verticals_to_top = left_border_only || right_border_only || bottom_only_with_verticals;
-        let extend_verticals_to_bottom = left_border_only || right_border_only || top_only_with_verticals;
+        let bottom_only_with_verticals = border_sides.bottom
+            && is_at_actual_bottom
+            && !border_sides.top
+            && (border_sides.left || border_sides.right);
+        let top_only_with_verticals = border_sides.top
+            && is_at_actual_top
+            && !border_sides.bottom
+            && (border_sides.left || border_sides.right);
+        let extend_verticals_to_top =
+            left_border_only || right_border_only || bottom_only_with_verticals;
+        let extend_verticals_to_bottom =
+            left_border_only || right_border_only || top_only_with_verticals;
 
         let vertical_start_y = if extend_verticals_to_top {
             start_y
         } else {
-            start_y + if border_sides.top && is_at_actual_top { 1 } else { 0 }
+            start_y
+                + if border_sides.top && is_at_actual_top {
+                    1
+                } else {
+                    0
+                }
         };
         let vertical_end_y = if extend_verticals_to_bottom {
             end_y
         } else {
-            end_y - if border_sides.bottom && is_at_actual_bottom { 1 } else { 0 }
+            end_y
+                - if border_sides.bottom && is_at_actual_bottom {
+                    1
+                } else {
+                    0
+                }
         };
         for draw_y in vertical_start_y..=vertical_end_y {
             if border_sides.left && is_at_actual_left {
@@ -1123,7 +1291,9 @@ impl OptimizedBuffer {
             }
         }
 
-        if let Some(title) = title.filter(|value| !value.is_empty() && border_sides.top && is_at_actual_top) {
+        if let Some(title) =
+            title.filter(|value| !value.is_empty() && border_sides.top && is_at_actual_top)
+        {
             let title_width = title
                 .chars()
                 .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
