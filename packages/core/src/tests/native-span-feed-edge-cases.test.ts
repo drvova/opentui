@@ -112,7 +112,7 @@ test("decrementRefcount with out-of-bounds chunkIndex does not crash or corrupt"
   stream.close()
 })
 
-test("toArrayBuffer aliases Zig-owned chunk memory", () => {
+test("toArrayBuffer aliases native-owned chunk memory", () => {
   const stream = NativeSpanFeed.create({ chunkSize: 256, initialChunks: 1 })
 
   const received: Uint8Array[] = []

@@ -16,7 +16,6 @@
     "**/*.spec.ts",
     "**/*.fixture.ts",
     "src/examples/**/*",
-    "src/benchmark/**/*",
-    "src/zig/**/*"
+    "src/benchmark/**/*"
   ]
 }

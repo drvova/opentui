@@ -98,7 +98,7 @@ test("multiple concurrent streams operate independently", () => {
 })
 
 test("onError handler fires when Error event is received", () => {
-  // Zig doesn't emit Error yet; this verifies the handler plumbing.
+  // The current native stream does not emit Error yet; this verifies the handler plumbing.
 
   const stream = NativeSpanFeed.create({ chunkSize: 256, initialChunks: 1 })
 

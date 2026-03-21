@@ -730,7 +730,7 @@ function convertToDebugSymbols<T extends Record<string, any>>(symbols: T): T {
   return debugSymbols as T
 }
 
-// Log levels matching Zig's LogLevel enum
+// Log levels matching the native runtime enum
 export enum LogLevel {
   Error = 0,
   Warn = 1,
@@ -1285,7 +1285,7 @@ class FFIRenderLib implements RenderLib {
               console.log(message)
           }
         } catch (error) {
-          console.error("Error in Zig log callback:", error)
+          console.error("Error in native log callback:", error)
         }
       },
       {

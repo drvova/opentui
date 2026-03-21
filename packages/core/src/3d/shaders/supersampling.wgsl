@@ -22,7 +22,7 @@ struct SuperSamplingParams {
 @group(0) @binding(1) var<storage, read_write> output: CellBuffer;
 @group(0) @binding(2) var<uniform> params: SuperSamplingParams;
 
-// Quadrant character lookup table (same as Zig implementation)
+// Quadrant character lookup table shared with the native buffer implementation.
 const quadrantChars = array<u32, 16>(
     32u,      // ' '  - 0000
     0x2597u,  // ▗   - 0001 BR

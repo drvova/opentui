@@ -39,10 +39,6 @@ Run Rust-native performance benchmarks:
 bun run bench:native
 ```
 
-NativeSpanFeed TypeScript benchmarks:
-
-- [src/benchmark/native-span-feed-benchmark.md](src/benchmark/native-span-feed-benchmark.md)
-
 ## Native Runtime
 
 The default native runtime lives in [native](native). It is built as a Rust `cdylib`, packaged into the platform-specific `@opentui/core-<platform>-<arch>` packages, and checked against the Bun FFI ABI manifest before release.

@@ -1105,8 +1105,8 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     this.lib.setUseThread(this.rendererPtr, useThread)
   }
 
-  // TODO: All input management may move to native when zig finally has async io support again,
-  // without rolling a full event loop
+  // TODO: Input management may move fully into the native runtime later
+  // without rolling a second event loop in TypeScript.
   public async setupTerminal(): Promise<void> {
     if (this._terminalIsSetup) return
     this._terminalIsSetup = true

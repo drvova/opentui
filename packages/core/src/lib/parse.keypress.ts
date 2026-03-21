@@ -165,7 +165,7 @@ export const parseKeypress = (s: Buffer | string = "", options: ParseKeypressOpt
   if (/^\[<\d+;\d+;\d+[Mm]$/.test(s)) {
     return null
   }
-  // Incomplete/partial SGR mouse sequences (flushed by the zig parser when
+  // Incomplete/partial SGR mouse sequences (flushed by the native parser when
   // a new ESC arrives before the sequence is complete). These start with
   // ESC[< followed by digits/semicolons but lack the terminal M/m.
   if (/^\x1b\[<[\d;]*$/.test(s)) {

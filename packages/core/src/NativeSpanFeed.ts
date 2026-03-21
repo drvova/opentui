@@ -32,7 +32,7 @@ type StreamEventHandler = (eventId: number, arg0: Pointer, arg1: number | bigint
 export type DataHandler = (data: Uint8Array) => void | Promise<void>
 
 /**
- * Zero-copy wrapper over Zig memory; not a full stream interface.
+ * Zero-copy wrapper over native stream memory; not a full stream interface.
  */
 export class NativeSpanFeed {
   static create(options?: NativeSpanFeedOptions): NativeSpanFeed {
@@ -173,7 +173,7 @@ export class NativeSpanFeed {
         case EventId.StateBuffer: {
           const len = toNumber(arg1)
           if (len > 0 && arg0) {
-            // toArrayBuffer must alias Zig memory so refcount writes are visible.
+            // toArrayBuffer must alias native memory so refcount writes are visible.
             const buffer = toArrayBuffer(arg0, 0, len)
             this.stateBuffer = new Uint8Array(buffer)
           }

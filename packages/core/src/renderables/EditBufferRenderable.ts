@@ -598,8 +598,8 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     ): { width: number; height: number } => {
       // When widthMode is Undefined, Yoga is asking for the intrinsic/natural width
       // Pass width=0 to measureForDimensions to signal we want max-content (no wrapping)
-      // The Zig code treats width=0 with wrap_mode != none as null wrap_width,
-      // which triggers no-wrap mode and returns the text's intrinsic width
+      // The native measurement path treats width=0 with wrap_mode != none as
+      // an intrinsic-width query and returns the text's unwrapped width.
       let effectiveWidth: number
       if (widthMode === MeasureMode.Undefined || isNaN(width)) {
         effectiveWidth = 0
