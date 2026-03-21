@@ -133,6 +133,16 @@ export class OptimizedBuffer {
     return this._height
   }
 
+  public rebind(ptr: Pointer, width: number, height: number, options: { id?: string } = {}): void {
+    this.bufferPtr = ptr
+    this._width = width
+    this._height = height
+    if (options.id) {
+      this.id = options.id
+    }
+    this._rawBuffers = null
+  }
+
   public setRespectAlpha(respectAlpha: boolean): void {
     this.guard()
     this.lib.bufferSetRespectAlpha(this.bufferPtr, respectAlpha)

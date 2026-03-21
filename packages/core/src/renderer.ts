@@ -1656,8 +1656,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this.lib.resizeRenderer(this.rendererPtr, this.width, this.height)
-    this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
-    this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
+    this.syncRenderBuffers()
     this._console.resize(this.width, this.height)
     this.root.resize(this.width, this.height)
     this.emit(CliRenderEvents.RESIZE, this.width, this.height)
@@ -2169,10 +2168,19 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
     this.renderingNative = true
     this.lib.render(this.rendererPtr, force)
-    this.nextRenderBuffer = this.lib.getNextBuffer(this.rendererPtr)
-    this.currentRenderBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
+    this.syncRenderBuffers()
     // this.dumpStdoutBuffer(Date.now())
     this.renderingNative = false
+  }
+
+  private syncRenderBuffers(): void {
+    const nextBuffer = this.lib.getNextBuffer(this.rendererPtr)
+    const currentBuffer = this.lib.getCurrentBuffer(this.rendererPtr)
+
+    this.nextRenderBuffer.rebind(nextBuffer.ptr, nextBuffer.width, nextBuffer.height, { id: nextBuffer.id })
+    this.currentRenderBuffer.rebind(currentBuffer.ptr, currentBuffer.width, currentBuffer.height, {
+      id: currentBuffer.id,
+    })
   }
 
   private collectStatSample(frameTime: number): void {

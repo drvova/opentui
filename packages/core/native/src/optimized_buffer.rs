@@ -597,34 +597,127 @@ impl OptimizedBuffer {
         out
     }
 
-    pub fn draw_frame_buffer(&mut self, dest_x: i32, dest_y: i32, other: &OptimizedBuffer) {
-        for row in 0..other.height {
-            for col in 0..other.width {
-                let target_x = dest_x + col as i32;
-                let target_y = dest_y + row as i32;
-                if target_x < 0 || target_y < 0 {
-                    continue;
-                }
-                let target_x = target_x as usize;
-                let target_y = target_y as usize;
-                if target_x >= self.width || target_y >= self.height {
+    pub fn draw_frame_buffer(
+        &mut self,
+        dest_x: i32,
+        dest_y: i32,
+        other: &OptimizedBuffer,
+        source_x: usize,
+        source_y: usize,
+        source_width: Option<usize>,
+        source_height: Option<usize>,
+    ) {
+        if self.width == 0
+            || self.height == 0
+            || other.width == 0
+            || other.height == 0
+            || source_x >= other.width
+            || source_y >= other.height
+        {
+            return;
+        }
+
+        let source_width = source_width.unwrap_or(other.width.saturating_sub(source_x));
+        let source_height = source_height.unwrap_or(other.height.saturating_sub(source_y));
+        if source_width == 0 || source_height == 0 {
+            return;
+        }
+
+        let clamped_source_width = source_width.min(other.width.saturating_sub(source_x));
+        let clamped_source_height = source_height.min(other.height.saturating_sub(source_y));
+        let start_dest_x = dest_x.max(0);
+        let start_dest_y = dest_y.max(0);
+        let end_dest_x = (dest_x + clamped_source_width as i32 - 1).min(self.width as i32 - 1);
+        let end_dest_y = (dest_y + clamped_source_height as i32 - 1).min(self.height as i32 - 1);
+
+        if start_dest_x > end_dest_x || start_dest_y > end_dest_y {
+            return;
+        }
+
+        let dest_width = (end_dest_x - start_dest_x + 1) as u32;
+        let dest_height = (end_dest_y - start_dest_y + 1) as u32;
+        let Some(clipped) = self.clip_rect(start_dest_x, start_dest_y, dest_width, dest_height) else {
+            return;
+        };
+
+        let clipped_start_x = start_dest_x.max(clipped.x);
+        let clipped_start_y = start_dest_y.max(clipped.y);
+        let clipped_end_x = end_dest_x.min(clipped.x + clipped.width as i32 - 1);
+        let clipped_end_y = end_dest_y.min(clipped.y + clipped.height as i32 - 1);
+
+        let grapheme_aware = !self.used_graphemes.is_empty() || !other.used_graphemes.is_empty();
+
+        for dest_row in clipped_start_y..=clipped_end_y {
+            let mut last_drawn_grapheme_id = 0_u32;
+
+            for dest_col in clipped_start_x..=clipped_end_x {
+                let relative_x = (dest_col - dest_x) as usize;
+                let relative_y = (dest_row - dest_y) as usize;
+                let src_x = source_x + relative_x;
+                let src_y = source_y + relative_y;
+
+                if src_x >= other.width || src_y >= other.height {
                     continue;
                 }
 
-                let src_index = other.cell_index(col, row);
+                let src_index = other.cell_index(src_x, src_y);
                 let codepoint = other.chars[src_index];
                 let fg = other.fg[src_index];
                 let bg = other.bg[src_index];
                 let attributes = other.attributes[src_index];
+
+                if bg[3] == 0.0 && fg[3] == 0.0 {
+                    continue;
+                }
+
+                if grapheme_aware {
+                    if is_continuation_char(codepoint) {
+                        let grapheme_id = grapheme_id_from_char(codepoint);
+                        if grapheme_id != last_drawn_grapheme_id {
+                            self.set_cell_with_alpha_blending(
+                                dest_col as usize,
+                                dest_row as usize,
+                                DEFAULT_SPACE_CHAR,
+                                fg,
+                                bg,
+                                attributes,
+                            );
+                        }
+                        continue;
+                    }
+
+                    if is_grapheme_char(codepoint) {
+                        last_drawn_grapheme_id = grapheme_id_from_char(codepoint);
+                    }
+                }
+
                 if color_has_alpha(fg) || color_has_alpha(bg) || self.current_opacity() < 1.0 {
                     self.set_cell_with_alpha_blending(
-                        target_x, target_y, codepoint, fg, bg, attributes,
+                        dest_col as usize,
+                        dest_row as usize,
+                        codepoint,
+                        fg,
+                        bg,
+                        attributes,
                     );
                 } else {
-                    self.write_cell(target_x, target_y, codepoint, fg, bg, attributes);
+                    self.write_cell(dest_col as usize, dest_row as usize, codepoint, fg, bg, attributes);
                 }
             }
         }
+    }
+
+    pub fn copy_from(&mut self, other: &OptimizedBuffer) {
+        if self.width != other.width || self.height != other.height {
+            self.resize(other.width, other.height);
+        }
+
+        self.respect_alpha = other.respect_alpha;
+        self.id = other.id.clone();
+        self.chars.clone_from(&other.chars);
+        self.fg.clone_from(&other.fg);
+        self.bg.clone_from(&other.bg);
+        self.attributes.clone_from(&other.attributes);
     }
 
     pub fn color_matrix(
@@ -894,20 +987,52 @@ impl OptimizedBuffer {
 
         let start_x = x.max(0);
         let start_y = y.max(0);
-        let end_x = ((x + width as i32 - 1).min(self.width as i32 - 1)).max(-1);
-        let end_y = ((y + height as i32 - 1).min(self.height as i32 - 1)).max(-1);
+        let end_x = (self.width as i32 - 1).min(x + width as i32 - 1);
+        let end_y = (self.height as i32 - 1).min(y + height as i32 - 1);
         if start_x > end_x || start_y > end_y {
             return;
         }
 
+        let box_width = (end_x - start_x + 1) as u32;
+        let box_height = (end_y - start_y + 1) as u32;
+        let Some(clipped) = self.clip_rect(start_x, start_y, box_width, box_height) else {
+            return;
+        };
+        let start_x = start_x.max(clipped.x);
+        let start_y = start_y.max(clipped.y);
+        let end_x = end_x.min(clipped.x + clipped.width as i32 - 1);
+        let end_y = end_y.min(clipped.y + clipped.height as i32 - 1);
+
+        let is_at_actual_left = start_x == x;
+        let is_at_actual_right = end_x == x + width as i32 - 1;
+        let is_at_actual_top = start_y == y;
+        let is_at_actual_bottom = end_y == y + height as i32 - 1;
+
         if should_fill {
-            self.fill_rect(
-                start_x as usize,
-                start_y as usize,
-                (end_x - start_x + 1) as usize,
-                (end_y - start_y + 1) as usize,
-                background_color,
-            );
+            if !border_sides.top && !border_sides.right && !border_sides.bottom && !border_sides.left {
+                self.fill_rect(
+                    start_x as usize,
+                    start_y as usize,
+                    (end_x - start_x + 1) as usize,
+                    (end_y - start_y + 1) as usize,
+                    background_color,
+                );
+            } else {
+                let inner_start_x = start_x + if border_sides.left && is_at_actual_left { 1 } else { 0 };
+                let inner_start_y = start_y + if border_sides.top && is_at_actual_top { 1 } else { 0 };
+                let inner_end_x = end_x - if border_sides.right && is_at_actual_right { 1 } else { 0 };
+                let inner_end_y = end_y - if border_sides.bottom && is_at_actual_bottom { 1 } else { 0 };
+
+                if inner_end_x >= inner_start_x && inner_end_y >= inner_start_y {
+                    self.fill_rect(
+                        inner_start_x as usize,
+                        inner_start_y as usize,
+                        (inner_end_x - inner_start_x + 1) as usize,
+                        (inner_end_y - inner_start_y + 1) as usize,
+                        background_color,
+                    );
+                }
+            }
         }
 
         let top_left = *border_chars.first().unwrap_or(&('+' as u32));
@@ -917,12 +1042,12 @@ impl OptimizedBuffer {
         let horizontal = *border_chars.get(4).unwrap_or(&('-' as u32));
         let vertical = *border_chars.get(5).unwrap_or(&('|' as u32));
 
-        if border_sides.top {
+        if border_sides.top && is_at_actual_top {
             for draw_x in start_x..=end_x {
                 let mut ch = horizontal;
-                if draw_x == start_x && border_sides.left {
+                if draw_x == start_x && border_sides.left && is_at_actual_left {
                     ch = top_left;
-                } else if draw_x == end_x && border_sides.right {
+                } else if draw_x == end_x && border_sides.right && is_at_actual_right {
                     ch = top_right;
                 }
                 self.set_cell_with_alpha_blending(
@@ -936,12 +1061,12 @@ impl OptimizedBuffer {
             }
         }
 
-        if border_sides.bottom {
+        if border_sides.bottom && is_at_actual_bottom {
             for draw_x in start_x..=end_x {
                 let mut ch = horizontal;
-                if draw_x == start_x && border_sides.left {
+                if draw_x == start_x && border_sides.left && is_at_actual_left {
                     ch = bottom_left;
-                } else if draw_x == end_x && border_sides.right {
+                } else if draw_x == end_x && border_sides.right && is_at_actual_right {
                     ch = bottom_right;
                 }
                 self.set_cell_with_alpha_blending(
@@ -955,10 +1080,28 @@ impl OptimizedBuffer {
             }
         }
 
-        let vertical_start_y = start_y + if border_sides.top { 1 } else { 0 };
-        let vertical_end_y = end_y - if border_sides.bottom { 1 } else { 0 };
+        let left_border_only = border_sides.left && is_at_actual_left && !border_sides.top && !border_sides.bottom;
+        let right_border_only =
+            border_sides.right && is_at_actual_right && !border_sides.top && !border_sides.bottom;
+        let bottom_only_with_verticals =
+            border_sides.bottom && is_at_actual_bottom && !border_sides.top && (border_sides.left || border_sides.right);
+        let top_only_with_verticals =
+            border_sides.top && is_at_actual_top && !border_sides.bottom && (border_sides.left || border_sides.right);
+        let extend_verticals_to_top = left_border_only || right_border_only || bottom_only_with_verticals;
+        let extend_verticals_to_bottom = left_border_only || right_border_only || top_only_with_verticals;
+
+        let vertical_start_y = if extend_verticals_to_top {
+            start_y
+        } else {
+            start_y + if border_sides.top && is_at_actual_top { 1 } else { 0 }
+        };
+        let vertical_end_y = if extend_verticals_to_bottom {
+            end_y
+        } else {
+            end_y - if border_sides.bottom && is_at_actual_bottom { 1 } else { 0 }
+        };
         for draw_y in vertical_start_y..=vertical_end_y {
-            if border_sides.left {
+            if border_sides.left && is_at_actual_left {
                 self.set_cell_with_alpha_blending(
                     start_x as usize,
                     draw_y as usize,
@@ -968,7 +1111,7 @@ impl OptimizedBuffer {
                     0,
                 );
             }
-            if border_sides.right {
+            if border_sides.right && is_at_actual_right {
                 self.set_cell_with_alpha_blending(
                     end_x as usize,
                     draw_y as usize,
@@ -980,28 +1123,30 @@ impl OptimizedBuffer {
             }
         }
 
-        if let Some(title) = title.filter(|value| !value.is_empty() && border_sides.top) {
+        if let Some(title) = title.filter(|value| !value.is_empty() && border_sides.top && is_at_actual_top) {
             let title_width = title
                 .chars()
                 .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
                 .sum::<usize>() as i32;
-            let padding = 2;
-            let unclamped_title_x = match title_alignment {
-                1 => start_x + ((width as i32 - title_width) / 2).max(padding),
-                2 => start_x + width as i32 - padding - title_width,
-                _ => start_x + padding,
-            };
-            let min_title_x = start_x + 1;
-            let max_title_x = end_x.saturating_sub(title_width).max(min_title_x);
-            let title_x = unclamped_title_x.clamp(min_title_x, max_title_x);
-            self.draw_text(
-                title_x as usize,
-                start_y as usize,
-                title,
-                border_color,
-                background_color,
-                0,
-            );
+            if width as i32 >= title_width + 4 {
+                let padding = 2;
+                let unclamped_title_x = match title_alignment {
+                    1 => start_x + ((width as i32 - title_width) / 2).max(padding),
+                    2 => start_x + width as i32 - padding - title_width,
+                    _ => start_x + padding,
+                };
+                let min_title_x = start_x + 1;
+                let max_title_x = end_x.saturating_sub(title_width).max(min_title_x);
+                let title_x = unclamped_title_x.clamp(min_title_x, max_title_x);
+                self.draw_text(
+                    title_x as usize,
+                    start_y as usize,
+                    title,
+                    border_color,
+                    background_color,
+                    0,
+                );
+            }
         }
     }
 
@@ -1486,7 +1631,7 @@ mod tests {
         let mut parent = OptimizedBuffer::with_id(2, 1, false, b"parent".to_vec());
         let mut child = OptimizedBuffer::with_id(2, 1, false, b"child".to_vec());
         child.draw_text(0, 0, "Hi", [1.0; 4], DEFAULT_BG, 0);
-        parent.draw_frame_buffer(0, 0, &child);
+        parent.draw_frame_buffer(0, 0, &child, 0, 0, None, None);
         assert_eq!(read_chars(&parent)[0], 'H' as u32);
         assert_eq!(read_chars(&parent)[1], 'i' as u32);
 

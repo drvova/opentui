@@ -318,6 +318,33 @@ impl TextBufferViewState {
         self.buffer().text_range(start, end)
     }
 
+    pub(crate) fn rendered_text_for_offsets(&self, start: u32, end: u32) -> String {
+        let text = self.buffer().text_range(start, end);
+        if !text.contains('\t') {
+            return text;
+        }
+
+        let mut rendered = String::with_capacity(text.len());
+        let indicator = self
+            .tab_indicator
+            .and_then(char::from_u32)
+            .unwrap_or(' ');
+        let tab_width = usize::from(self.buffer().tab_width().max(1));
+
+        for ch in text.chars() {
+            if ch == '\t' {
+                rendered.push(indicator);
+                for _ in 1..tab_width {
+                    rendered.push(' ');
+                }
+            } else {
+                rendered.push(ch);
+            }
+        }
+
+        rendered
+    }
+
     pub(crate) fn selection_colors(&self) -> (Option<Rgba>, Option<Rgba>) {
         (self.selection_bg, self.selection_fg)
     }

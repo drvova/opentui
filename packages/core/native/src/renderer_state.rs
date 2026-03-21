@@ -96,7 +96,7 @@ impl RendererState {
     }
 
     pub fn render(&mut self) {
-        std::mem::swap(&mut self.current_buffer, &mut self.next_buffer);
+        self.current_buffer.copy_from(&self.next_buffer);
     }
 
     pub fn add_to_hit_grid(&mut self, x: i32, y: i32, width: u32, height: u32, id: u32) {
@@ -248,8 +248,8 @@ mod tests {
         let current = renderer.current_buffer_ptr();
         let next = renderer.next_buffer_ptr();
         renderer.render();
-        assert_eq!(renderer.current_buffer_ptr(), next);
-        assert_eq!(renderer.next_buffer_ptr(), current);
+        assert_eq!(renderer.current_buffer_ptr(), current);
+        assert_eq!(renderer.next_buffer_ptr(), next);
         renderer.resize(8, 4);
         assert_eq!(renderer.hit_grid_width, 8);
         assert_eq!(renderer.hit_grid_height, 4);

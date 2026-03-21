@@ -218,6 +218,10 @@ impl EditorViewState {
         self.text_buffer_view.text_for_offsets(start, end)
     }
 
+    pub(crate) fn rendered_text_for_offsets(&self, start: u32, end: u32) -> String {
+        self.text_buffer_view.rendered_text_for_offsets(start, end)
+    }
+
     pub(crate) fn selection_colors(&self) -> (Option<[f32; 4]>, Option<[f32; 4]>) {
         self.text_buffer_view.selection_colors()
     }
@@ -252,6 +256,11 @@ impl EditorViewState {
 
     pub fn set_tab_indicator_color(&mut self, color: [f32; 4]) {
         self.text_buffer_view.set_tab_indicator_color(color);
+    }
+
+    pub(crate) fn placeholder_text(&self) -> Option<&str> {
+        (self.edit_buffer().text_bytes().is_empty() && !self.placeholder_text.is_empty())
+            .then_some(self.placeholder_text.as_str())
     }
 
     pub fn cursor(&self) -> (u32, u32) {

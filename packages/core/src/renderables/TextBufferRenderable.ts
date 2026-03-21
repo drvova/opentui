@@ -130,7 +130,17 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     }
   }
 
+  protected syncViewMetrics(): void {
+    if (this.width > 0 && this.height > 0) {
+      this.textBufferView.setViewport(this._scrollX, this._scrollY, this.width, this.height)
+    }
+    if (this._wrapMode !== "none" && this.width > 0) {
+      this.textBufferView.setWrapWidth(this.width)
+    }
+  }
+
   public get lineInfo(): LineInfo {
+    this.syncViewMetrics()
     return this._wrapMode === "none" ? this.textBufferView.logicalLineInfo : this.textBufferView.lineInfo
   }
 
@@ -490,6 +500,7 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
 
   protected renderSelf(buffer: OptimizedBuffer): void {
     if (this.textBuffer.ptr) {
+      this.syncViewMetrics()
       buffer.drawTextBuffer(this.textBufferView, this.x, this.y)
     }
   }

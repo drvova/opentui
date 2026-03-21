@@ -2870,17 +2870,25 @@ pub extern "C" fn drawFrameBuffer(
     dest_x: i32,
     dest_y: i32,
     source: *mut NativeOptimizedBuffer,
-    _src_x: u32,
-    _src_y: u32,
-    _src_width: u32,
-    _src_height: u32,
+    src_x: u32,
+    src_y: u32,
+    src_width: u32,
+    src_height: u32,
 ) {
     if target.is_null() || source.is_null() {
         return;
     }
     let target = unsafe { &mut *target };
     let source = unsafe { &*source };
-    target.draw_frame_buffer(dest_x, dest_y, source);
+    target.draw_frame_buffer(
+        dest_x,
+        dest_y,
+        source,
+        src_x as usize,
+        src_y as usize,
+        (src_width > 0).then_some(src_width as usize),
+        (src_height > 0).then_some(src_height as usize),
+    );
 }
 
 #[unsafe(no_mangle)]
@@ -3170,9 +3178,9 @@ pub extern "C" fn bufferDrawTextBufferView(
     for line in view.visible_lines() {
         let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
         if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
-            let before = view.text_for_offsets(line.start_offset, sel_start);
-            let selected = view.text_for_offsets(sel_start, sel_end);
-            let after = view.text_for_offsets(sel_end, line.end_offset);
+            let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
+            let selected = view.rendered_text_for_offsets(sel_start, sel_end);
+            let after = view.rendered_text_for_offsets(sel_end, line.end_offset);
             let before_width = text_width(&before, view.tab_width()) as usize;
             let selected_width = text_width(&selected, view.tab_width()) as usize;
 
@@ -3201,7 +3209,7 @@ pub extern "C" fn bufferDrawTextBufferView(
                 0,
             );
         } else {
-            let text = view.text_for_offsets(line.start_offset, line.end_offset);
+            let text = view.rendered_text_for_offsets(line.start_offset, line.end_offset);
             let _ = buffer.draw_text(
                 usize::try_from(x).unwrap_or(0),
                 row,
@@ -3231,12 +3239,27 @@ pub extern "C" fn bufferDrawEditorView(
     let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
     let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
 
+    if let Some(placeholder) = view.placeholder_text() {
+        for (row_index, line) in placeholder.split('\n').enumerate() {
+            let row = usize::try_from(y).unwrap_or(0) + row_index;
+            let _ = buffer.draw_text(
+                usize::try_from(x).unwrap_or(0),
+                row,
+                line,
+                default_fg,
+                default_bg,
+                0,
+            );
+        }
+        return;
+    }
+
     for line in view.visible_lines() {
         let row = usize::try_from(y).unwrap_or(0) + usize::try_from(line.viewport_row).unwrap_or(0);
         if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
-            let before = view.text_for_offsets(line.start_offset, sel_start);
-            let selected = view.text_for_offsets(sel_start, sel_end);
-            let after = view.text_for_offsets(sel_end, line.end_offset);
+            let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
+            let selected = view.rendered_text_for_offsets(sel_start, sel_end);
+            let after = view.rendered_text_for_offsets(sel_end, line.end_offset);
             let before_width = text_width(&before, view.tab_width()) as usize;
             let selected_width = text_width(&selected, view.tab_width()) as usize;
 
@@ -3265,7 +3288,7 @@ pub extern "C" fn bufferDrawEditorView(
                 0,
             );
         } else {
-            let text = view.text_for_offsets(line.start_offset, line.end_offset);
+            let text = view.rendered_text_for_offsets(line.start_offset, line.end_offset);
             let _ = buffer.draw_text(
                 usize::try_from(x).unwrap_or(0),
                 row,
