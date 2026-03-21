@@ -1,0 +1,31 @@
+[package]
+name = "opentui-native"
+version = "0.1.90"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Rust native foundation for the OpenTUI C ABI migration"
+repository = "https://github.com/anomalyco/opentui"
+build = "build.rs"
+
+[lib]
+name = "opentui"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+capi = []
+
+[build-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+[package.metadata.capi]
+min_version = "0.10.0"
+
+[package.metadata.capi.header]
+name = "opentui-foundation"
+
+[package.metadata.capi.pkg_config]
+name = "opentui-foundation"
+filename = "opentui-foundation"

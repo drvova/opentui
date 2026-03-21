@@ -1,0 +1,16 @@
+language = "C"
+pragma_once = true
+include_guard = "OPENTUI_FOUNDATION_H"
+documentation = true
+cpp_compat = true
+usize_is_size_t = true
+
+[parse]
+expand = ["opentui-native"]
+
+[export]
+include = [
+  "OpentuiRustFoundationAbiInfo",
+  "opentui_rust_foundation_abi_hash",
+  "opentui_rust_foundation_abi_info",
+]

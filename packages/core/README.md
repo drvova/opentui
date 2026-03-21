@@ -45,6 +45,15 @@ NativeSpanFeed TypeScript benchmarks:
 
 - [src/benchmark/native-span-feed-benchmark.md](src/benchmark/native-span-feed-benchmark.md)
 
+## Rust Native Migration Foundation
+
+The Rust migration groundwork lives in [native](native). It is not the default runtime yet; it provides a checked ABI manifest and a Rust `cdylib` foundation that will be expanded until it can replace the Zig core cleanly.
+
+```bash
+bun run native:abi:check
+bun run native:rust:test
+```
+
 ## CLI Renderer
 
 ### Renderables

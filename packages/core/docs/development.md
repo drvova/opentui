@@ -4,6 +4,7 @@
 
 - [Bun](https://bun.sh) - JavaScript runtime and package manager
 - [Zig](https://ziglang.org/learn/getting-started/) - Required for building native modules
+- [Rust](https://www.rust-lang.org/tools/install) - Required for the Rust native migration foundation in `packages/core/native`
 
 ## Setup
 
@@ -43,6 +44,16 @@ bun run test:native -Dtest-filter="test name"
 
 # Benchmarks
 bun run bench:native
+```
+
+### Rust native foundation
+
+The Rust migration foundation lives in `packages/core/native`. It does not replace the Zig runtime yet; it exists to lock the ABI contract and validate the future Rust `cdylib` path.
+
+```bash
+cd packages/core
+bun run native:abi:check
+bun run native:rust:test
 ```
 
 ## Local Development Linking

@@ -1,5 +1,9 @@
 # Agent Guidelines for opentui
 
+## Self-Improvement Ledger
+
+- 2026-03-20 | seam: Bun-backed package-script verification failed locally because `bun` was unavailable to the current shell | root cause: the environment did not have Bun installed and the installer's PATH update was not visible in the active non-login shell | canonical fix: install Bun to `~/.bun/bin` and prepend `PATH="$HOME/.bun/bin:$PATH"` in verification shells | validation seam: `export PATH="$HOME/.bun/bin:$PATH" && cd packages/core && bun run native:abi:check && bun run native:rust:test`
+
 Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
