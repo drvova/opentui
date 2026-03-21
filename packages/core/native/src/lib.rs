@@ -3,12 +3,14 @@
 use core::ffi::{c_char, c_uint};
 
 mod edit_buffer;
+mod editor_view;
 mod native_span_feed;
 mod syntax_style;
 mod text_buffer;
 mod text_buffer_view;
 
 pub type NativeEditBuffer = edit_buffer::EditBufferState;
+pub type NativeEditorView = editor_view::EditorViewState;
 pub type NativeLogicalCursor = edit_buffer::LogicalCursor;
 pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
 pub type NativeSpanFeedOptions = native_span_feed::Options;
@@ -21,6 +23,7 @@ pub type NativeTextBuffer = text_buffer::TextBufferState;
 pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
 
 use edit_buffer::EditBufferState;
+use editor_view::EditorViewState;
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use syntax_style::{Rgba, SyntaxStyleState};
 use text_buffer::{TextBufferState, copy_bytes_to_out};
@@ -958,6 +961,238 @@ pub extern "C" fn editBufferGetTextRangeByCoords(
     let buffer = unsafe { &*buffer };
     let text = buffer.text_buffer_text_range_by_coords(start_row, start_col, end_row, end_col);
     copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createEditorView(
+    edit_buffer_ptr: *mut NativeEditBuffer,
+    viewport_width: u32,
+    viewport_height: u32,
+) -> *mut NativeEditorView {
+    if edit_buffer_ptr.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    Box::into_raw(Box::new(EditorViewState::new(
+        edit_buffer_ptr,
+        viewport_width,
+        viewport_height,
+    )))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyEditorView(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(view));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetViewportSize(view: *mut NativeEditorView, width: u32, height: u32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_viewport_size(width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetViewport(
+    view: *mut NativeEditorView,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    _move_cursor: bool,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_viewport(x, y, width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetViewport(
+    view: *const NativeEditorView,
+    x_ptr: *mut u32,
+    y_ptr: *mut u32,
+    width_ptr: *mut u32,
+    height_ptr: *mut u32,
+) {
+    if view.is_null()
+        || x_ptr.is_null()
+        || y_ptr.is_null()
+        || width_ptr.is_null()
+        || height_ptr.is_null()
+    {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    let (x, y, width, height) = view.viewport();
+    unsafe {
+        *x_ptr = x;
+        *y_ptr = y;
+        *width_ptr = width;
+        *height_ptr = height;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetScrollMargin(view: *mut NativeEditorView, margin: f32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_scroll_margin(margin);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetWrapMode(view: *mut NativeEditorView, mode: u8) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_wrap_mode(mode);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetVirtualLineCount(view: *const NativeEditorView) -> u32 {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    view.virtual_line_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetTotalVirtualLineCount(view: *const NativeEditorView) -> u32 {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    view.total_virtual_line_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetTextBufferView(
+    view: *mut NativeEditorView,
+) -> *mut NativeTextBufferView {
+    if view.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    let view = unsafe { &mut *view };
+    view.text_buffer_view_ptr()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewSetSelection(
+    view: *mut NativeEditorView,
+    start: u32,
+    end: u32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_selection(start, end);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewResetSelection(view: *mut NativeEditorView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.reset_selection();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetSelection(view: *const NativeEditorView) -> u64 {
+    if view.is_null() {
+        return NO_SELECTION;
+    }
+
+    let view = unsafe { &*view };
+    view.selection_info()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewUpdateSelection(
+    view: *mut NativeEditorView,
+    end: u32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.update_selection(end);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetSelectedTextBytes(
+    view: *const NativeEditorView,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    let data = view.selected_text_bytes();
+    copy_bytes_to_out(&data, out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetCursor(
+    view: *const NativeEditorView,
+    row_ptr: *mut u32,
+    col_ptr: *mut u32,
+) {
+    if view.is_null() || row_ptr.is_null() || col_ptr.is_null() {
+        return;
+    }
+
+    let view = unsafe { &*view };
+    let (row, col) = view.cursor();
+    unsafe {
+        *row_ptr = row;
+        *col_ptr = col;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn editorViewGetText(
+    view: *const NativeEditorView,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    copy_bytes_to_out(view.text_bytes(), out_ptr, max_len)
 }
 
 #[unsafe(no_mangle)]
