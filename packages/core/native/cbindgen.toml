@@ -11,6 +11,11 @@ expand = ["opentui-native"]
 [export]
 include = [
   "OpentuiRustFoundationAbiInfo",
+  "createSyntaxStyle",
+  "destroySyntaxStyle",
   "opentui_rust_foundation_abi_hash",
   "opentui_rust_foundation_abi_info",
+  "syntaxStyleGetStyleCount",
+  "syntaxStyleRegister",
+  "syntaxStyleResolveByName",
 ]

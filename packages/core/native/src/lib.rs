@@ -2,6 +2,10 @@
 
 use core::ffi::{c_char, c_uint};
 
+mod syntax_style;
+
+use syntax_style::{Rgba, SyntaxStyleState};
+
 const ABI_SYMBOL_COUNT: c_uint = parse_symbol_count();
 const ABI_HASH_CSTR: &[u8] = concat!(env!("OPENTUI_ABI_SYMBOL_HASH"), "\0").as_bytes();
 const BUILD_PROFILE_CSTR: &[u8] = concat!(env!("OPENTUI_BUILD_PROFILE"), "\0").as_bytes();
@@ -37,6 +41,11 @@ const fn static_cstr(bytes: &'static [u8]) -> *const c_char {
     bytes.as_ptr().cast()
 }
 
+fn color_from_ptr(ptr: *const f32) -> Rgba {
+    let color = unsafe { std::slice::from_raw_parts(ptr, 4) };
+    [color[0], color[1], color[2], color[3]]
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn opentui_rust_foundation_abi_hash() -> *const c_char {
     static_cstr(ABI_HASH_CSTR)
@@ -60,13 +69,77 @@ pub extern "C" fn opentui_rust_foundation_abi_info(out: *mut OpentuiRustFoundati
     true
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn createSyntaxStyle() -> *mut SyntaxStyleState {
+    Box::into_raw(Box::new(SyntaxStyleState::default()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroySyntaxStyle(style: *mut SyntaxStyleState) {
+    if style.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(style));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn syntaxStyleRegister(
+    style: *mut SyntaxStyleState,
+    name_ptr: *const u8,
+    name_len: usize,
+    fg: *const f32,
+    bg: *const f32,
+    attributes: u32,
+) -> u32 {
+    if style.is_null() || name_ptr.is_null() {
+        return 0;
+    }
+
+    let state = unsafe { &mut *style };
+    let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+    let fg = (!fg.is_null()).then(|| color_from_ptr(fg));
+    let bg = (!bg.is_null()).then(|| color_from_ptr(bg));
+
+    state.register_style(name, fg, bg, attributes)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn syntaxStyleResolveByName(
+    style: *const SyntaxStyleState,
+    name_ptr: *const u8,
+    name_len: usize,
+) -> u32 {
+    if style.is_null() || name_ptr.is_null() {
+        return 0;
+    }
+
+    let state = unsafe { &*style };
+    let name = unsafe { std::slice::from_raw_parts(name_ptr, name_len) };
+
+    state.resolve_by_name(name).unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn syntaxStyleGetStyleCount(style: *const SyntaxStyleState) -> usize {
+    if style.is_null() {
+        return 0;
+    }
+
+    let state = unsafe { &*style };
+    state.style_count()
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::CStr;
 
     use super::{
-        ABI_SYMBOL_COUNT, OpentuiRustFoundationAbiInfo, opentui_rust_foundation_abi_hash,
-        opentui_rust_foundation_abi_info,
+        ABI_SYMBOL_COUNT, OpentuiRustFoundationAbiInfo, createSyntaxStyle, destroySyntaxStyle,
+        opentui_rust_foundation_abi_hash, opentui_rust_foundation_abi_info,
+        syntaxStyleGetStyleCount, syntaxStyleRegister, syntaxStyleResolveByName,
     };
 
     #[test]
@@ -103,5 +176,63 @@ mod tests {
         assert_eq!(abi_hash.len(), 64);
         assert_eq!(crate_version, env!("CARGO_PKG_VERSION"));
         assert_eq!(build_profile, env!("OPENTUI_BUILD_PROFILE"));
+    }
+
+    #[test]
+    fn syntax_style_ffi_round_trip_works() {
+        let style = createSyntaxStyle();
+        assert_ne!(style, core::ptr::null_mut());
+        assert_eq!(syntaxStyleGetStyleCount(style), 0);
+
+        let name = b"keyword";
+        let fg = [1.0_f32, 0.0, 0.0, 1.0];
+        let first = syntaxStyleRegister(
+            style,
+            name.as_ptr(),
+            name.len(),
+            fg.as_ptr(),
+            core::ptr::null(),
+            1,
+        );
+        let second = syntaxStyleRegister(
+            style,
+            name.as_ptr(),
+            name.len(),
+            core::ptr::null(),
+            core::ptr::null(),
+            2,
+        );
+
+        assert_eq!(first, second);
+        assert_eq!(
+            syntaxStyleResolveByName(style, name.as_ptr(), name.len()),
+            first
+        );
+        assert_eq!(syntaxStyleGetStyleCount(style), 1);
+
+        destroySyntaxStyle(style);
+    }
+
+    #[test]
+    fn syntax_style_ffi_is_defensive_about_nulls() {
+        let name = b"missing";
+
+        assert_eq!(
+            syntaxStyleRegister(
+                core::ptr::null_mut(),
+                name.as_ptr(),
+                name.len(),
+                core::ptr::null(),
+                core::ptr::null(),
+                0
+            ),
+            0
+        );
+        assert_eq!(
+            syntaxStyleResolveByName(core::ptr::null(), name.as_ptr(), name.len()),
+            0
+        );
+        assert_eq!(syntaxStyleGetStyleCount(core::ptr::null()), 0);
+        destroySyntaxStyle(core::ptr::null_mut());
     }
 }
