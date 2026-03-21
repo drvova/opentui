@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::text_buffer::{
     TextBufferState, line_start_offset, next_offset, offset_to_position, position_to_offset,
-    previous_offset, text_width,
+    previous_offset, text_weight, text_width,
 };
 
 static NEXT_EDIT_BUFFER_ID: AtomicU16 = AtomicU16::new(1);
@@ -66,21 +66,6 @@ impl EditBufferState {
         self.cursor_offset = 0;
     }
 
-    pub fn text_buffer_text_range(&self, start_offset: u32, end_offset: u32) -> String {
-        self.text_buffer.text_range(start_offset, end_offset)
-    }
-
-    pub fn text_buffer_text_range_by_coords(
-        &self,
-        start_row: u32,
-        start_col: u32,
-        end_row: u32,
-        end_col: u32,
-    ) -> String {
-        self.text_buffer
-            .text_range_by_coords(start_row, start_col, end_row, end_col)
-    }
-
     pub fn cursor(&self) -> LogicalCursor {
         let (row, col) = offset_to_position(
             self.text_buffer.text_str(),
@@ -108,10 +93,7 @@ impl EditBufferState {
     }
 
     pub fn set_cursor_by_offset(&mut self, offset: u32) {
-        let max = crate::text_buffer::text_weight(
-            self.text_buffer.text_str(),
-            self.text_buffer.tab_width(),
-        );
+        let max = text_weight(self.text_buffer.text_str(), self.text_buffer.tab_width());
         self.cursor_offset = offset.min(max);
     }
 
@@ -163,13 +145,13 @@ impl EditBufferState {
     }
 
     pub fn goto_line(&mut self, line: u32) {
-        if line_start_offset(
-            self.text_buffer.text_str(),
-            self.text_buffer.tab_width(),
-            line,
-        )
-        .is_some()
-            || line == 0
+        if line == 0
+            || line_start_offset(
+                self.text_buffer.text_str(),
+                self.text_buffer.tab_width(),
+                line,
+            )
+            .is_some()
         {
             self.set_cursor_to_line_col(line, 0);
         }
@@ -261,6 +243,21 @@ impl EditBufferState {
             row,
         )
         .unwrap_or(0)
+    }
+
+    pub fn text_buffer_text_range(&self, start_offset: u32, end_offset: u32) -> String {
+        self.text_buffer.text_range(start_offset, end_offset)
+    }
+
+    pub fn text_buffer_text_range_by_coords(
+        &self,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> String {
+        self.text_buffer
+            .text_range_by_coords(start_row, start_col, end_row, end_col)
     }
 }
 
