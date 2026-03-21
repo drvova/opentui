@@ -65,6 +65,25 @@ fn is_wrap_break(ch: char) -> bool {
         )
 }
 
+fn trailing_whitespace_width(token: &str, tab_width: u8) -> u32 {
+    let mut width = 0_u32;
+
+    for ch in token.chars().rev() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        width = width.saturating_add(char_weight(ch, tab_width));
+    }
+
+    width
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BreakKind {
+    Whitespace,
+    Punctuation,
+}
+
 #[derive(Debug)]
 pub struct TextBufferViewState {
     text_buffer: *mut TextBufferState,
@@ -600,6 +619,7 @@ impl TextBufferViewState {
                     let mut segment_start_col = 0_u32;
                     let mut current_col = 0_u32;
                     let mut last_break_col = None;
+                    let mut last_break_kind = None;
                     let mut wrap_index = 0_u32;
 
                     for token in line.split_inclusive(is_wrap_break) {
@@ -617,6 +637,7 @@ impl TextBufferViewState {
                                 segment_start_col = end_col;
                                 current_col = end_col;
                                 last_break_col = None;
+                                last_break_kind = None;
                             }
 
                             for ch in token.chars() {
@@ -640,6 +661,11 @@ impl TextBufferViewState {
                                 current_col = current_col.saturating_add(width);
                                 if is_wrap_break(ch) {
                                     last_break_col = Some(current_col);
+                                    last_break_kind = Some(if ch.is_whitespace() {
+                                        BreakKind::Whitespace
+                                    } else {
+                                        BreakKind::Punctuation
+                                    });
                                 }
                             }
                             continue;
@@ -647,6 +673,29 @@ impl TextBufferViewState {
 
                         let segment_width = current_col.saturating_sub(segment_start_col);
                         if segment_width > 0 && segment_width.saturating_add(token_width) > wrap_width {
+                            let trailing_ws_width = trailing_whitespace_width(token, tab_width);
+                            if trailing_ws_width > 0
+                                && last_break_col == Some(current_col)
+                                && last_break_kind == Some(BreakKind::Whitespace)
+                                && segment_width
+                                    .saturating_add(token_width.saturating_sub(trailing_ws_width))
+                                    <= wrap_width
+                            {
+                                let end_col = current_col + token_width - trailing_ws_width;
+                                virtual_lines.push(VirtualLine {
+                                    start_offset: line_start.saturating_add(segment_start_col),
+                                    width_cols: end_col.saturating_sub(segment_start_col),
+                                    source_line: source_line as u32,
+                                    wrap_index,
+                                });
+                                wrap_index = wrap_index.saturating_add(1);
+                                current_col = current_col.saturating_add(token_width);
+                                segment_start_col = current_col;
+                                last_break_col = None;
+                                last_break_kind = None;
+                                continue;
+                            }
+
                             let end_col = last_break_col.unwrap_or(current_col);
                             virtual_lines.push(VirtualLine {
                                 start_offset: line_start.saturating_add(segment_start_col),
@@ -658,11 +707,17 @@ impl TextBufferViewState {
                             segment_start_col = end_col;
                             current_col = end_col;
                             last_break_col = None;
+                            last_break_kind = None;
                         }
 
                         current_col = current_col.saturating_add(token_width);
-                        if token.chars().last().is_some_and(is_wrap_break) {
+                        if let Some(last) = token.chars().last().filter(|ch| is_wrap_break(*ch)) {
                             last_break_col = Some(current_col);
+                            last_break_kind = Some(if last.is_whitespace() {
+                                BreakKind::Whitespace
+                            } else {
+                                BreakKind::Punctuation
+                            });
                         }
                     }
 
@@ -762,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn word_wrap_keeps_following_tokens_on_the_same_segment_after_a_wrap() {
+    fn word_wrap_can_keep_a_trailing_word_when_only_the_space_overflows() {
         let mut buffer = TextBufferState::new(0);
         let id = buffer.register_mem_buffer(b"aaaaaa bbb ccc").unwrap();
         buffer.set_text_from_mem(id);
@@ -775,7 +830,7 @@ mod tests {
         let widths =
             unsafe { std::slice::from_raw_parts(line_info.width_cols, line_info.width_cols_len as usize) };
 
-        assert_eq!(widths, &[7, 7]);
+        assert_eq!(widths, &[10, 3]);
     }
 
     #[test]
@@ -800,5 +855,30 @@ mod tests {
         assert_eq!(starts, &[0, 23]);
         assert_eq!(view.text_for_offsets(0, 23), "Shift+W to toggle wrap ");
         assert_eq!(view.text_for_offsets(23, 44), "mode (word/char/none)");
+    }
+
+    #[test]
+    fn word_wrap_keeps_last_word_when_only_trailing_space_overflows() {
+        let mut buffer = TextBufferState::new(0);
+        let id = buffer
+            .register_mem_buffer(
+                b"This is a longer message that should wrap properly within the absolutely positioned box",
+            )
+            .unwrap();
+        buffer.set_text_from_mem(id);
+
+        let mut view = TextBufferViewState::new(&mut buffer);
+        view.set_wrap_mode(2);
+        view.set_wrap_width(57);
+
+        let info = view.line_info();
+        let widths =
+            unsafe { std::slice::from_raw_parts(info.width_cols, info.width_cols_len as usize) };
+
+        assert_eq!(widths[0], 57);
+        assert_eq!(
+            view.rendered_text_for_offsets(0, 57),
+            "This is a longer message that should wrap properly within"
+        );
     }
 }

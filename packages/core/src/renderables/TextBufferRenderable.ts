@@ -131,11 +131,14 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
   }
 
   protected syncViewMetrics(): void {
-    if (this.width > 0 && this.height > 0) {
-      this.textBufferView.setViewport(this._scrollX, this._scrollY, this.width, this.height)
+    const visibleWidth = this._ctx.width > 0 ? Math.max(0, Math.min(this.width, this._ctx.width - this.x)) : this.width
+    const visibleHeight = this._ctx.height > 0 ? Math.max(0, Math.min(this.height, this._ctx.height - this.y)) : this.height
+
+    if (visibleWidth > 0 && visibleHeight > 0) {
+      this.textBufferView.setViewport(this._scrollX, this._scrollY, visibleWidth, visibleHeight)
     }
-    if (this._wrapMode !== "none" && this.width > 0) {
-      this.textBufferView.setWrapWidth(this.width)
+    if (this._wrapMode !== "none" && visibleWidth > 0) {
+      this.textBufferView.setWrapWidth(visibleWidth)
     }
   }
 

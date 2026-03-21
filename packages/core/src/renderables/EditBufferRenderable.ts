@@ -133,7 +133,18 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   }
 
   public get lineInfo(): LineInfo {
+    this.syncViewportMetrics()
     return this._wrapMode === "none" ? this.editorView.getLogicalLineInfo() : this.editorView.getLineInfo()
+  }
+
+  private syncViewportMetrics(): void {
+    const visibleWidth = this._ctx.width > 0 ? Math.max(0, Math.min(this.width, this._ctx.width - this.x)) : this.width
+    const visibleHeight = this._ctx.height > 0 ? Math.max(0, Math.min(this.height, this._ctx.height - this.y)) : this.height
+
+    if (visibleWidth > 0 && visibleHeight > 0) {
+      const viewport = this.editorView.getViewport()
+      this.editorView.setViewport(viewport.offsetX, viewport.offsetY, visibleWidth, visibleHeight, false)
+    }
   }
 
   private setupEventListeners(options: EditBufferOptions): void {
@@ -400,6 +411,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
   protected onResize(width: number, height: number): void {
     this.editorView.setViewportSize(width, height)
+    this.syncViewportMetrics()
     this.syncViewportToCursor()
   }
 
@@ -413,7 +425,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     const totalVirtualLines = this.editorView.getTotalVirtualLineCount()
     const maxOffsetY = Math.max(0, totalVirtualLines - viewport.height)
     const marginY = Math.max(0, Math.floor(viewport.height * this._scrollMargin))
-    const edgeMarginY = Math.max(1, marginY)
+    const edgeMarginY = Math.min(Math.max(0, viewport.height - 1), marginY)
 
     let offsetY = viewport.offsetY
     if (cursor.visualRow < offsetY + marginY) {
@@ -426,7 +438,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     if (this._wrapMode === "none") {
       const maxOffsetX = Math.max(0, this.lineInfo.lineWidthColsMax - viewport.width)
       const marginX = Math.max(0, Math.floor(viewport.width * this._scrollMargin))
-      const edgeMarginX = Math.max(1, marginX)
+      const edgeMarginX = Math.min(Math.max(0, viewport.width - 1), marginX)
 
       if (cursor.visualCol < offsetX + marginX) {
         offsetX = Math.max(0, cursor.visualCol - marginX)
@@ -632,6 +644,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   }
 
   protected renderSelf(buffer: OptimizedBuffer): void {
+    this.syncViewportMetrics()
     buffer.drawEditorView(this.editorView, this.x, this.y)
   }
 
