@@ -53,6 +53,21 @@ impl SyntaxStyleState {
         self.name_to_id.get(name).copied()
     }
 
+    pub fn resolve_by_id(&self, id: u32) -> Option<StyleDefinition> {
+        self.id_to_style.get(&id).copied()
+    }
+
+    pub fn resolve_by_definition(
+        &self,
+        fg: Option<Rgba>,
+        bg: Option<Rgba>,
+        attributes: u32,
+    ) -> Option<u32> {
+        self.id_to_style.iter().find_map(|(id, style)| {
+            (style.fg == fg && style.bg == bg && style.attributes == attributes).then_some(*id)
+        })
+    }
+
     pub fn style_count(&self) -> usize {
         self.id_to_style.len()
     }

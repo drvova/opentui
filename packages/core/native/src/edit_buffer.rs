@@ -98,6 +98,10 @@ impl EditBufferState {
         self.text_buffer.default_bg()
     }
 
+    pub fn default_attributes(&self) -> Option<u32> {
+        self.text_buffer.default_attributes()
+    }
+
     pub fn clear(&mut self) {
         if self.text_buffer.text_str().is_empty() {
             self.cursor_offset = 0;

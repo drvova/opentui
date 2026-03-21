@@ -45,14 +45,14 @@ exports[`TextTableRenderable balanced fitter keeps constrained columns visually 
 │Prov│Compute      │Storage  │Pricing  │Regions│Use Cases│  
 │ider│Services     │Solutions│Model    │       │         │  
 ├────┼─────────────┼─────────┼─────────┼───────┼─────────┤  
-│Amaz│EC2          │S3 tiers,│Pay as   │Global │Enterpris│  
-│on W│instances    │ EBS,    │you go,  │regions│e migrati│  
-│eb S│with         │EFS, and │reserved │ and ma│on, analy│  
-│ervi│extensive    │archive  │terms,   │ny edge│tics, ML,│  
-│ces │options for  │classes  │and      │ locati│ and back│  
-│    │general,     │for long │discounte│ons    │end servi│  
-│    │memory, and  │retention│d spot ca│       │ces      │  
-│    │accelerated  │         │pacity   │       │         │  
+│Amaz│EC2          │S3       │Pay as   │Global │Enterpris│  
+│on W│instances    │tiers, EB│you go, r│regions│e migrati│  
+│eb  │with         │S, EFS, a│eserved  │ and ma│on, analy│  
+│Serv│extensive    │nd       │terms, an│ny edge│tics,    │  
+│ices│options for  │archive c│d discoun│ locati│ML, and  │  
+│    │general,     │lasses   │ted spot │ons    │backend s│  
+│    │memory, and  │for long │capacity │       │ervices  │  
+│    │accelerated  │retention│         │       │         │  
 │    │workloads    │         │         │       │         │  
 └────┴─────────────┴─────────┴─────────┴───────┴─────────┘  
                                                             
@@ -65,14 +65,14 @@ exports[`TextTableRenderable balanced fitter keeps constrained columns visually 
 │Provider│Compute │Storage  │Pricing  │Regions │Use Cases│  
 │        │Services│Solutions│Model    │        │         │  
 ├────────┼────────┼─────────┼─────────┼────────┼─────────┤  
-│Amazon  │EC2     │S3 tiers,│Pay as   │Global  │Enterpris│  
-│Web     │instance│ EBS,    │you go,  │regions │e migrati│  
-│Services│s with e│EFS, and │reserved │and     │on, analy│  
-│        │xtensive│archive  │terms,   │many    │tics, ML,│  
-│        │ options│classes  │and      │edge    │ and back│  
-│        │ for gen│for long │discounte│location│end servi│  
-│        │eral, me│retention│d spot ca│s       │ces      │  
-│        │mory, an│         │pacity   │        │         │  
+│Amazon  │EC2     │S3       │Pay as   │Global  │Enterpris│  
+│Web Serv│instance│tiers, EB│you go, r│regions │e migrati│  
+│ices    │s with e│S, EFS, a│eserved  │and many│on, analy│  
+│        │xtensive│nd       │terms, an│ edge lo│tics,    │  
+│        │ options│archive c│d discoun│cations │ML, and  │  
+│        │ for gen│lasses   │ted spot │        │backend s│  
+│        │eral, me│for long │capacity │        │ervices  │  
+│        │mory, an│retention│         │        │         │  
 │        │d accele│         │         │        │         │  
 │        │rated wo│         │         │        │         │  
 │        │rkloads │         │         │        │         │  
@@ -146,9 +146,9 @@ exports[`TextTableRenderable keeps full wrapped table layouts after a wide-to-na
 ├─────────────────────────┼─────────────┼────────────────────────────┤
 │Wrap regression in       │core         │done after validating none, │
 │operational status       │platform and │word, and char wrap modes   │
-│dashboard with dynamic   │runtime      │across narrow, medium, wide,│
-│row heights and          │reliability  │ and ultra-wide terminal    │
-│constrained layout       │squad        │widths                      │
+│dashboard with dynamic   │runtime      │across narrow, medium,      │
+│row heights and          │reliability  │wide, and ultra-wide        │
+│constrained layout       │squad        │terminal widths             │
 │validation               │             │                            │
 ├─────────────────────────┼─────────────┼────────────────────────────┤
 │Unicode layout           │render       │in review with follow-up    │
@@ -189,9 +189,9 @@ exports[`TextTableRenderable keeps full wrapped table layouts after a wide-to-na
 │n    │                                                              │
 ├─────┼──────────────────────────────────────────────────────────────┤
 │mixed│CJK and emoji wrapping stress case: こんにちは世界 and        │
-│-lang│안녕하세요 세계 and 你好，世界 followed by long English prose │
-│uages│that keeps flowing to test whether each cell wraps naturally  │
-│     │even when the terminal is extremely wide and the row still    │
+│-    │안녕하세요 세계 and 你好，世界 followed by long English prose │
+│langu│that keeps flowing to test whether each cell wraps naturally  │
+│ages │even when the terminal is extremely wide and the row still    │
 │     │needs multiple visual lines for readability 🌍🚀              │
 ├─────┼──────────────────────────────────────────────────────────────┤
 │emoji│Faces 😀😃😄😁😆 plus symbols 🧪📦🛰️🔧📊 mixed with version   │
@@ -206,10 +206,10 @@ exports[`TextTableRenderable keeps full wrapped table layouts after a wide-to-na
 │     │wrapping torture test.                                        │
 ├─────┼──────────────────────────────────────────────────────────────┤
 │mixed│Wrap behavior with punctuation-heavy content: [alpha]{beta}(  │
-│-punc│gamma)<delta>|epsilon| then repeated fragments, commas,       │
-│tuati│semicolons, and slashes to verify token boundaries do not     │
-│on   │break border drawing logic or spacing consistency in          │
-│     │neighboring columns.                                          │
+│-    │gamma)<delta>|epsilon| then repeated fragments, commas,       │
+│punct│semicolons, and slashes to verify token boundaries do not     │
+│uatio│break border drawing logic or spacing consistency in          │
+│n    │neighboring columns.                                          │
 └─────┴──────────────────────────────────────────────────────────────┘
 "
 `;

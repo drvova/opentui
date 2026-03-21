@@ -1,6 +1,8 @@
 use crate::{
     edit_buffer::{EditBufferState, LogicalCursor},
+    syntax_style::SyntaxStyleState,
     text_buffer::{StyledChunk, next_offset},
+    text_buffer::{StyleSpan},
     text_buffer_view::{LineInfoOut, TextBufferViewState},
 };
 
@@ -222,10 +224,6 @@ impl EditorViewState {
         self.text_buffer_view.visible_lines()
     }
 
-    pub(crate) fn text_for_offsets(&self, start: u32, end: u32) -> String {
-        self.text_buffer_view.text_for_offsets(start, end)
-    }
-
     pub(crate) fn rendered_text_for_offsets(&self, start: u32, end: u32) -> String {
         self.text_buffer_view.rendered_text_for_offsets(start, end)
     }
@@ -240,6 +238,34 @@ impl EditorViewState {
 
     pub(crate) fn default_bg(&self) -> Option<[f32; 4]> {
         self.edit_buffer().default_bg()
+    }
+
+    pub(crate) fn default_attributes(&self) -> Option<u32> {
+        self.edit_buffer().default_attributes()
+    }
+
+    pub(crate) fn line_spans(&self, line_idx: usize) -> &[StyleSpan] {
+        self.text_buffer_view.line_spans(line_idx)
+    }
+
+    pub(crate) fn wrap_mode(&self) -> u8 {
+        self.text_buffer_view.wrap_mode()
+    }
+
+    pub(crate) fn truncate(&self) -> bool {
+        self.text_buffer_view.truncate()
+    }
+
+    pub(crate) fn viewport_x(&self) -> u32 {
+        self.viewport_x
+    }
+
+    pub(crate) fn viewport_width(&self) -> u32 {
+        self.viewport_width
+    }
+
+    pub(crate) fn syntax_style(&self) -> Option<&SyntaxStyleState> {
+        self.text_buffer_view.syntax_style()
     }
 
     pub(crate) fn tab_width(&self) -> u8 {
@@ -392,8 +418,9 @@ impl EditorViewState {
                     .map(|next| next.source_line == line.source_line)
                     .unwrap_or(false);
                 if next_same_source && line.width_cols > 0 {
-                    line.start_offset
-                        .saturating_add(line.width_cols.saturating_sub(1))
+                    self.text_buffer_view
+                        .offset_for_visual_position(cursor.visual_row, line.width_cols.saturating_sub(1))
+                        .unwrap_or(line.start_offset)
                 } else {
                     line.start_offset.saturating_add(line.width_cols)
                 }

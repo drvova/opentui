@@ -104,13 +104,35 @@ impl Default for TerminalCapabilities {
             sync: false,
             bracketed_paste: false,
             hyperlinks: false,
-            osc52: true,
+            osc52: false,
             explicit_cursor_positioning: true,
             term_name: b"rust-terminal".to_vec(),
             term_version: b"0.1".to_vec(),
             term_from_xtversion: false,
         }
     }
+}
+
+fn parse_xtversion(text: &str) -> Option<(&str, &str)> {
+    let prefix = "\x1bP>|";
+    let suffix = "\x1b\\";
+    let body = text.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    let open = body.find('(')?;
+    let close = body.rfind(')')?;
+    (open < close).then_some((&body[..open], &body[open + 1..close]))
+}
+
+fn parse_decrpm(text: &str) -> Option<(u32, u32)> {
+    let body = text.strip_prefix("\x1b[?")?.strip_suffix("$y")?;
+    let mut parts = body.split(';');
+    let mode = parts.next()?.parse().ok()?;
+    let value = parts.next()?.parse().ok()?;
+    Some((mode, value))
+}
+
+fn parse_cpr(text: &str) -> Option<u32> {
+    let body = text.strip_prefix("\x1b[1;")?.strip_suffix('R')?;
+    body.parse().ok()
 }
 
 #[derive(Debug, Default)]
@@ -236,16 +258,52 @@ impl TerminalState {
 
     pub fn process_capability_response(&mut self, response: &[u8]) {
         let text = String::from_utf8_lossy(response);
+        if let Some((name, version)) = parse_xtversion(&text) {
+            self.capabilities.term_name = name.as_bytes().to_vec();
+            self.capabilities.term_version = version.as_bytes().to_vec();
+            self.capabilities.term_from_xtversion = true;
+        }
+
         if text.contains("kitty") {
             self.capabilities.kitty_keyboard = true;
             self.capabilities.kitty_graphics = true;
-            self.capabilities.term_name = b"kitty".to_vec();
+            self.capabilities.osc52 = true;
         }
         if text.contains("sixel") {
             self.capabilities.sixel = true;
         }
         if text.contains("sync") {
             self.capabilities.sync = true;
+        }
+        if let Some((mode, value)) = parse_decrpm(&text) {
+            let enabled = value == 1 || value == 2;
+            match mode {
+                1004 => self.capabilities.focus_tracking = enabled,
+                1016 => self.capabilities.sgr_pixels = enabled,
+                2004 => self.capabilities.bracketed_paste = enabled,
+                2026 => self.capabilities.sync = enabled,
+                2027 => {
+                    if enabled {
+                        self.capabilities.unicode = 1;
+                    }
+                }
+                2031 => self.capabilities.color_scheme_updates = enabled,
+                _ => {}
+            }
+        }
+
+        if let Some(column) = parse_cpr(&text) {
+            if column >= 2 {
+                if self.capabilities.explicit_width {
+                    self.capabilities.scaled_text = column >= 3;
+                } else {
+                    self.capabilities.explicit_width = true;
+                }
+            }
+        }
+
+        if text.contains("\x1b[?0u") || text.contains("\x1b[?1u") {
+            self.capabilities.kitty_keyboard = true;
         }
     }
 

@@ -27,6 +27,13 @@ pub struct ExternalHighlight {
     pub hl_ref: u16,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StyleSpan {
+    pub col: u32,
+    pub style_id: u32,
+    pub next_col: u32,
+}
+
 #[derive(Debug)]
 pub struct TextBufferState {
     width_method: u8,
@@ -38,6 +45,7 @@ pub struct TextBufferState {
     default_attributes: Option<u32>,
     syntax_style: Option<*const SyntaxStyleState>,
     line_highlights: Vec<Vec<ExternalHighlight>>,
+    line_spans: Vec<Vec<StyleSpan>>,
     tab_width: u8,
 }
 
@@ -53,6 +61,7 @@ impl TextBufferState {
             default_attributes: None,
             syntax_style: None,
             line_highlights: Vec::new(),
+            line_spans: Vec::new(),
             tab_width: 2,
         }
     }
@@ -107,8 +116,16 @@ impl TextBufferState {
         self.default_bg
     }
 
+    pub fn default_attributes(&self) -> Option<u32> {
+        self.default_attributes
+    }
+
     pub fn set_syntax_style(&mut self, style: Option<*const SyntaxStyleState>) {
         self.syntax_style = style;
+    }
+
+    pub fn syntax_style(&self) -> Option<&SyntaxStyleState> {
+        self.syntax_style.map(|ptr| unsafe { &*ptr })
     }
 
     pub fn reset_defaults(&mut self) {
@@ -193,15 +210,43 @@ impl TextBufferState {
     }
 
     pub fn set_styled_text(&mut self, chunks: &[StyledChunk]) {
+        if chunks.is_empty() {
+            self.clear();
+            self.clear_all_highlights();
+            return;
+        }
+
         let mut text = String::new();
-        for chunk in chunks {
+        let mut pending_highlights = Vec::new();
+
+        for (index, chunk) in chunks.iter().enumerate() {
             if chunk.text_ptr.is_null() || chunk.text_len == 0 {
                 continue;
             }
+
             let bytes = unsafe { std::slice::from_raw_parts(chunk.text_ptr, chunk.text_len) };
-            text.push_str(&normalize_text_bytes(bytes));
+            let normalized = normalize_text_bytes(bytes);
+            if normalized.is_empty() {
+                continue;
+            }
+
+            let start = text_width(&text, self.tab_width);
+            let end = start.saturating_add(text_width(&normalized, self.tab_width));
+            if start < end {
+                if let Some(style_id) = self.resolve_chunk_style_id(index, chunk) {
+                    pending_highlights.push((start, end, style_id));
+                }
+            }
+
+            text.push_str(&normalized);
         }
+
         self.text = text;
+        self.clear_all_highlights();
+
+        for (start, end, style_id) in pending_highlights {
+            self.add_highlight_by_char_range(start, end, style_id, 1, 0);
+        }
     }
 
     pub fn plain_text_bytes(&self) -> &[u8] {
@@ -212,7 +257,48 @@ impl TextBufferState {
         if start_offset >= end_offset {
             return String::new();
         }
-        slice_by_weight_offsets(&self.text, self.tab_width, start_offset, end_offset)
+
+        let total_weight = text_weight(&self.text, self.tab_width);
+        if start_offset >= total_weight {
+            return String::new();
+        }
+
+        let clamped_end = end_offset.min(total_weight);
+        let mut output = String::new();
+        let mut col_offset = 0_u32;
+        let lines: Vec<&str> = if self.text.is_empty() {
+            Vec::new()
+        } else {
+            self.text.split('\n').collect()
+        };
+
+        for (line_idx, line) in lines.iter().enumerate() {
+            let line_width = text_width(line, self.tab_width);
+            let line_start = col_offset;
+            let line_end = line_start.saturating_add(line_width);
+            let mut line_had_content = false;
+
+            if line_end > start_offset && line_start < clamped_end {
+                let local_start = start_offset.saturating_sub(line_start);
+                let local_end = clamped_end.saturating_sub(line_start).min(line_width);
+                let selected = slice_by_display_offsets(line, self.tab_width, local_start, local_end);
+                if !selected.is_empty() {
+                    output.push_str(&selected);
+                    line_had_content = true;
+                }
+            }
+
+            if line_had_content
+                && line_idx + 1 < lines.len()
+                && line_end.saturating_add(1) < clamped_end
+            {
+                output.push('\n');
+            }
+
+            col_offset = line_end.saturating_add(1);
+        }
+
+        output
     }
 
     pub fn text_range_by_coords(
@@ -273,6 +359,9 @@ impl TextBufferState {
         if self.line_highlights.len() <= line_idx {
             self.line_highlights.resize_with(line_idx + 1, Vec::new);
         }
+        if self.line_spans.len() <= line_idx {
+            self.line_spans.resize_with(line_idx + 1, Vec::new);
+        }
 
         self.line_highlights[line_idx].push(ExternalHighlight {
             start: col_start,
@@ -281,6 +370,7 @@ impl TextBufferState {
             priority,
             hl_ref,
         });
+        self.rebuild_line_spans(line_idx);
     }
 
     pub fn add_highlight_by_char_range(
@@ -319,13 +409,21 @@ impl TextBufferState {
     }
 
     pub fn remove_highlights_by_ref(&mut self, hl_ref: u16) {
-        for line in &mut self.line_highlights {
+        for line_idx in 0..self.line_highlights.len() {
+            let line = &mut self.line_highlights[line_idx];
+            let before = line.len();
             line.retain(|hl| hl.hl_ref != hl_ref);
+            if line.len() != before {
+                self.rebuild_line_spans(line_idx);
+            }
         }
     }
 
     pub fn clear_line_highlights(&mut self, line_idx: usize) {
         if let Some(line) = self.line_highlights.get_mut(line_idx) {
+            line.clear();
+        }
+        if let Some(line) = self.line_spans.get_mut(line_idx) {
             line.clear();
         }
     }
@@ -334,10 +432,20 @@ impl TextBufferState {
         for line in &mut self.line_highlights {
             line.clear();
         }
+        for line in &mut self.line_spans {
+            line.clear();
+        }
     }
 
     pub fn get_line_highlights(&self, line_idx: usize) -> &[ExternalHighlight] {
         self.line_highlights
+            .get(line_idx)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn get_line_spans(&self, line_idx: usize) -> &[StyleSpan] {
+        self.line_spans
             .get(line_idx)
             .map(Vec::as_slice)
             .unwrap_or(&[])
@@ -386,6 +494,113 @@ impl TextBufferState {
             .replace_range(start_byte..end_byte.min(self.text.len()), "");
         start
     }
+
+    fn resolve_chunk_style_id(&mut self, index: usize, chunk: &StyledChunk) -> Option<u32> {
+        let style = unsafe { &mut *(self.syntax_style? as *const SyntaxStyleState as *mut SyntaxStyleState) };
+        let fg = rgba_from_ptr(chunk.fg_ptr);
+        let bg = rgba_from_ptr(chunk.bg_ptr);
+        let attributes = chunk.attributes;
+
+        if let Some(style_id) = style.resolve_by_definition(fg, bg, attributes) {
+            return Some(style_id);
+        }
+
+        let name = format!("chunk{index}");
+        Some(style.register_style(name.as_bytes(), fg, bg, attributes))
+    }
+
+    fn rebuild_line_spans(&mut self, line_idx: usize) {
+        if line_idx >= self.line_spans.len() {
+            self.line_spans.resize_with(line_idx + 1, Vec::new);
+        }
+
+        let spans = &mut self.line_spans[line_idx];
+        spans.clear();
+
+        let Some(highlights) = self.line_highlights.get(line_idx) else {
+            return;
+        };
+        if highlights.is_empty() {
+            return;
+        }
+
+        #[derive(Clone, Copy)]
+        struct Event {
+            col: u32,
+            is_start: bool,
+            hl_idx: usize,
+        }
+
+        let mut events = Vec::with_capacity(highlights.len().saturating_mul(2));
+        for (hl_idx, highlight) in highlights.iter().enumerate() {
+            events.push(Event {
+                col: highlight.start,
+                is_start: true,
+                hl_idx,
+            });
+            events.push(Event {
+                col: highlight.end,
+                is_start: false,
+                hl_idx,
+            });
+        }
+
+        events.sort_by(|left, right| {
+            left.col
+                .cmp(&right.col)
+                .then_with(|| right.is_start.cmp(&left.is_start))
+                .then_with(|| left.hl_idx.cmp(&right.hl_idx))
+        });
+
+        let mut active: Vec<usize> = Vec::new();
+        let mut current_col = 0_u32;
+
+        for event in events {
+            let mut current_style = 0_u32;
+            let mut current_priority = -1_i16;
+
+            for active_idx in &active {
+                let highlight = highlights[*active_idx];
+                if i16::from(highlight.priority) > current_priority {
+                    current_priority = i16::from(highlight.priority);
+                    current_style = highlight.style_id;
+                }
+            }
+
+            if event.col > current_col {
+                spans.push(StyleSpan {
+                    col: current_col,
+                    style_id: current_style,
+                    next_col: event.col,
+                });
+                current_col = event.col;
+            }
+
+            if event.is_start {
+                active.push(event.hl_idx);
+            } else if let Some(position) = active.iter().position(|value| *value == event.hl_idx) {
+                active.swap_remove(position);
+            }
+        }
+
+        let line_width = self
+            .text
+            .split('\n')
+            .nth(line_idx)
+            .map(|line| text_width(line, self.tab_width))
+            .unwrap_or(0);
+        if current_col < line_width {
+            spans.push(StyleSpan {
+                col: current_col,
+                style_id: 0,
+                next_col: line_width,
+            });
+        }
+    }
+}
+
+fn rgba_from_ptr(ptr: *const f32) -> Option<Rgba> {
+    (!ptr.is_null()).then(|| unsafe { std::ptr::read_unaligned(ptr.cast::<Rgba>()) })
 }
 
 fn normalize_text_bytes(data: &[u8]) -> String {
@@ -611,47 +826,6 @@ fn slice_by_display_offsets(
     text[start_byte..end_byte].to_string()
 }
 
-fn slice_by_weight_offsets(
-    text: &str,
-    tab_width: u8,
-    start_offset: u32,
-    end_offset: u32,
-) -> String {
-    if start_offset >= end_offset {
-        return String::new();
-    }
-
-    let mut weight = 0_u32;
-    let mut start_byte = None;
-    let mut end_byte = text.len();
-
-    for (index, ch) in text.char_indices() {
-        let char_weight = match ch {
-            '\r' => 0,
-            '\n' => 1,
-            '\t' => u32::from(tab_width.max(1)),
-            _ => ch.width().unwrap_or(0) as u32,
-        };
-
-        if start_byte.is_none() && weight >= start_offset {
-            start_byte = Some(index);
-        }
-        if weight >= end_offset {
-            end_byte = index;
-            break;
-        }
-
-        weight = weight.saturating_add(char_weight);
-    }
-
-    let start_byte = start_byte.unwrap_or_else(|| if start_offset == 0 { 0 } else { text.len() });
-    if weight < end_offset {
-        end_byte = text.len();
-    }
-
-    text[start_byte..end_byte].to_string()
-}
-
 pub(crate) fn char_weight(ch: char, tab_width: u8) -> u32 {
     match ch {
         '\r' => 0,
@@ -675,9 +849,10 @@ pub fn copy_bytes_to_out(source: &[u8], out_ptr: *mut u8, max_len: usize) -> usi
 #[cfg(test)]
 mod tests {
     use super::{
-        TextBufferState, copy_bytes_to_out, line_start_offset, next_offset, offset_to_position,
-        position_to_offset, previous_offset, text_width,
+        StyledChunk, TextBufferState, copy_bytes_to_out, line_start_offset, next_offset,
+        offset_to_position, position_to_offset, previous_offset, text_width,
     };
+    use crate::syntax_style::SyntaxStyleState;
 
     #[test]
     fn width_counts_unicode_cells_and_ignores_newlines() {
@@ -726,5 +901,33 @@ mod tests {
         assert_eq!(line_start_offset(text, 4, 1), Some(6));
         assert_eq!(previous_offset(text, 4, 6), 5);
         assert_eq!(next_offset(text, 4, 6), 8);
+    }
+
+    #[test]
+    fn styled_text_reuses_matching_syntax_style_ids() {
+        let mut syntax_style = SyntaxStyleState::default();
+        let keyword_id = syntax_style.register_style(b"keyword", Some([1.0, 0.0, 0.0, 1.0]), None, 1);
+
+        let mut buffer = TextBufferState::new(0);
+        buffer.set_syntax_style(Some(&syntax_style));
+
+        let fg = [1.0, 0.0, 0.0, 1.0];
+        let text = b"const value";
+        let chunks = [StyledChunk {
+            text_ptr: text.as_ptr(),
+            text_len: text.len(),
+            fg_ptr: fg.as_ptr(),
+            bg_ptr: core::ptr::null(),
+            attributes: 1,
+            link_ptr: core::ptr::null(),
+            link_len: 0,
+        }];
+
+        buffer.set_styled_text(&chunks);
+
+        let highlights = buffer.get_line_highlights(0);
+        assert_eq!(highlights.len(), 1);
+        assert_eq!(highlights[0].style_id, keyword_id);
+        assert_eq!(highlights[0].end, 11);
     }
 }

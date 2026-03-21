@@ -360,7 +360,21 @@ export class TextareaRenderable extends EditBufferRenderable {
       const start = this.editBuffer.offsetToPosition(selection.start)
       const end = this.editBuffer.offsetToPosition(selection.end)
       if (start && end) {
-        this.editBuffer.deleteRange(start.row, start.col, end.row, end.col)
+        const lineStartOffset = this.editBuffer.getLineStartOffset(start.row)
+        const nextLineStartOffset =
+          start.row + 1 < this.editBuffer.getLineCount() ? this.editBuffer.getLineStartOffset(start.row + 1) : null
+        const deletesWholeLine =
+          start.row === end.row &&
+          start.col === 0 &&
+          selection.start === lineStartOffset &&
+          nextLineStartOffset !== null &&
+          this.cursorOffset === nextLineStartOffset
+
+        if (deletesWholeLine) {
+          this.editBuffer.deleteRange(start.row, 0, start.row + 1, 0)
+        } else {
+          this.editBuffer.deleteRange(start.row, start.col, end.row, end.col)
+        }
       } else {
         this.editorView.deleteSelectedText()
       }

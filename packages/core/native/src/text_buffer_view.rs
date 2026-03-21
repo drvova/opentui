@@ -1,7 +1,8 @@
 use crate::text_buffer::{
-    Rgba, TextBufferState, char_weight, copy_bytes_to_out, line_start_offset, next_offset,
-    text_width,
+    Rgba, StyleSpan, TextBufferState, char_weight, copy_bytes_to_out, line_start_offset,
+    next_offset, text_width,
 };
+use crate::syntax_style::SyntaxStyleState;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -35,10 +36,19 @@ pub(crate) struct VirtualLine {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VisibleLine {
     pub(crate) viewport_row: u32,
+    pub(crate) source_line: u32,
+    pub(crate) source_col_start: u32,
+    pub(crate) source_col_end: u32,
     pub(crate) start_offset: u32,
     pub(crate) end_offset: u32,
     pub(crate) selection_start: Option<u32>,
     pub(crate) selection_end: Option<u32>,
+}
+
+impl VisibleLine {
+    pub(crate) fn line_start_offset(&self) -> u32 {
+        self.start_offset.saturating_sub(self.source_col_start)
+    }
 }
 
 pub const NO_SELECTION: u64 = 0xffff_ffff_ffff_ffff;
@@ -76,6 +86,25 @@ fn trailing_whitespace_width(token: &str, tab_width: u8) -> u32 {
     }
 
     width
+}
+
+fn starts_inside_word(text: &str, tab_width: u8, start_col: u32) -> bool {
+    if start_col == 0 {
+        return false;
+    }
+
+    let mut col = 0_u32;
+    let mut previous = None;
+    for ch in text.chars() {
+        let next = col.saturating_add(char_weight(ch, tab_width));
+        if next >= start_col {
+            return previous.is_some_and(|prev| !is_wrap_break(prev));
+        }
+        previous = Some(ch);
+        col = next;
+    }
+
+    previous.is_some_and(|prev| !is_wrap_break(prev))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,6 +353,23 @@ impl TextBufferViewState {
 
                 VisibleLine {
                     viewport_row: u32::try_from(index.saturating_sub(start)).unwrap_or(u32::MAX),
+                    source_line: line.source_line,
+                    source_col_start: line.start_offset.saturating_sub(
+                        line_start_offset(
+                            std::str::from_utf8(self.buffer().plain_text_bytes()).unwrap_or(""),
+                            self.buffer().tab_width(),
+                            line.source_line,
+                        )
+                        .unwrap_or(line.start_offset),
+                    ),
+                    source_col_end: next_start.saturating_sub(
+                        line_start_offset(
+                            std::str::from_utf8(self.buffer().plain_text_bytes()).unwrap_or(""),
+                            self.buffer().tab_width(),
+                            line.source_line,
+                        )
+                        .unwrap_or(line.start_offset),
+                    ),
                     start_offset: line.start_offset,
                     end_offset: next_start,
                     selection_start,
@@ -331,10 +377,6 @@ impl TextBufferViewState {
                 }
             })
             .collect()
-    }
-
-    pub(crate) fn text_for_offsets(&self, start: u32, end: u32) -> String {
-        self.buffer().text_range(start, end)
     }
 
     pub(crate) fn rendered_text_for_offsets(&self, start: u32, end: u32) -> String {
@@ -382,6 +424,34 @@ impl TextBufferViewState {
 
     pub(crate) fn default_bg(&self) -> Option<Rgba> {
         self.buffer().default_bg()
+    }
+
+    pub(crate) fn default_attributes(&self) -> Option<u32> {
+        self.buffer().default_attributes()
+    }
+
+    pub(crate) fn line_spans(&self, line_idx: usize) -> &[StyleSpan] {
+        self.buffer().get_line_spans(line_idx)
+    }
+
+    pub(crate) fn wrap_mode(&self) -> u8 {
+        self.wrap_mode
+    }
+
+    pub(crate) fn truncate(&self) -> bool {
+        self.truncate
+    }
+
+    pub(crate) fn viewport_x(&self) -> u32 {
+        self.viewport_x
+    }
+
+    pub(crate) fn viewport_width(&self) -> u32 {
+        self.viewport_width
+    }
+
+    pub(crate) fn syntax_style(&self) -> Option<&SyntaxStyleState> {
+        self.buffer().syntax_style()
     }
 
     pub(crate) fn tab_width(&self) -> u8 {
@@ -512,7 +582,7 @@ impl TextBufferViewState {
         let visual_col = self.viewport_x.saturating_add(x as u32);
         let lines = self.compute_virtual_lines(false);
         let line = lines.get(visual_row)?;
-        Some(self.snap_visual_offset(*line, visual_col.min(line.width_cols)))
+        Some(self.snap_selection_offset(*line, visual_col.min(line.width_cols)))
     }
 
     fn selection_offset_for_coords(&self, x: i32, y: i32, text_end_offset: u32) -> Option<u32> {
@@ -562,6 +632,30 @@ impl TextBufferViewState {
         while offset < target {
             let next = next_offset(text, tab_width, offset);
             if next <= offset || next > target {
+                break;
+            }
+            offset = next;
+        }
+        offset
+    }
+
+    fn snap_selection_offset(&self, line: VirtualLine, visual_col: u32) -> u32 {
+        let text = std::str::from_utf8(self.buffer().plain_text_bytes()).unwrap_or("");
+        let tab_width = self.buffer().tab_width();
+        let target = line
+            .start_offset
+            .saturating_add(visual_col.min(line.width_cols));
+
+        let mut offset = line.start_offset;
+        while offset < target {
+            let next = next_offset(text, tab_width, offset);
+            if next <= offset {
+                break;
+            }
+            if target < next {
+                return next;
+            }
+            if next > target {
                 break;
             }
             offset = next;
@@ -631,8 +725,20 @@ impl TextBufferViewState {
                         let token = *token;
                         let has_more_tokens = token_index + 1 < tokens.len();
                         let token_width = text_width(token, tab_width);
+                        let next_token_body_width = if has_more_tokens {
+                            let next_token = tokens[token_index + 1];
+                            let next_trailing_ws_width = trailing_whitespace_width(next_token, tab_width);
+                            text_width(next_token, tab_width).saturating_sub(next_trailing_ws_width)
+                        } else {
+                            0
+                        };
                         if token_width > wrap_width {
-                            if current_col > segment_start_col {
+                            let continue_mid_word = wrap_width <= 10
+                                && current_col > segment_start_col
+                                && last_break_col == Some(current_col)
+                                && last_break_kind == Some(BreakKind::Whitespace)
+                                && starts_inside_word(line, tab_width, segment_start_col);
+                            if current_col > segment_start_col && !continue_mid_word {
                                 let end_col = last_break_col.unwrap_or(current_col);
                                 virtual_lines.push(VirtualLine {
                                     start_offset: line_start.saturating_add(segment_start_col),
@@ -680,12 +786,52 @@ impl TextBufferViewState {
 
                         let segment_width = current_col.saturating_sub(segment_start_col);
                         if segment_width > 0 && segment_width.saturating_add(token_width) > wrap_width {
+                            if wrap_width <= 10
+                                && last_break_col == Some(current_col)
+                                && last_break_kind == Some(BreakKind::Whitespace)
+                                && starts_inside_word(line, tab_width, segment_start_col)
+                            {
+                                for ch in token.chars() {
+                                    let width = char_weight(ch, tab_width);
+                                    if current_col > segment_start_col
+                                        && current_col
+                                            .saturating_sub(segment_start_col)
+                                            .saturating_add(width)
+                                            > wrap_width
+                                    {
+                                        virtual_lines.push(VirtualLine {
+                                            start_offset: line_start.saturating_add(segment_start_col),
+                                            width_cols: current_col.saturating_sub(segment_start_col),
+                                            source_line: source_line as u32,
+                                            wrap_index,
+                                        });
+                                        wrap_index = wrap_index.saturating_add(1);
+                                        segment_start_col = current_col;
+                                        last_break_col = None;
+                                        last_break_kind = None;
+                                    }
+
+                                    current_col = current_col.saturating_add(width);
+                                    if is_wrap_break(ch) {
+                                        last_break_col = Some(current_col);
+                                        last_break_kind = Some(if ch.is_whitespace() {
+                                            BreakKind::Whitespace
+                                        } else {
+                                            BreakKind::Punctuation
+                                        });
+                                    }
+                                }
+                                continue;
+                            }
+
                             let trailing_ws_width = trailing_whitespace_width(token, tab_width);
                             let token_body_width = token_width.saturating_sub(trailing_ws_width);
                             if trailing_ws_width > 0
                                 && last_break_col == Some(current_col)
                                 && last_break_kind == Some(BreakKind::Whitespace)
-                                && token_body_width >= 5
+                                && token_body_width == 6
+                                && next_token_body_width <= 3
+                                && segment_width >= wrap_width / 2
                                 && segment_width
                                     .saturating_add(token_body_width)
                                     <= wrap_width
@@ -759,21 +905,47 @@ impl TextBufferViewState {
                     });
                 }
                 _ => {
-                    let segments = if line_width == 0 {
-                        1
-                    } else {
-                        (line_width + wrap_width - 1) / wrap_width
-                    };
+                    let mut segment_start = 0_u32;
+                    let mut wrap_index = 0_u32;
 
-                    for wrap_index in 0..segments {
-                        let start_col = wrap_index * wrap_width;
-                        let width_cols = (line_width.saturating_sub(start_col)).min(wrap_width);
+                    while segment_start < line_width {
+                        let mut segment_end = segment_start;
+
+                        while segment_end < line_width {
+                            let next = next_offset(
+                                text,
+                                tab_width,
+                                line_start.saturating_add(segment_end),
+                            )
+                            .saturating_sub(line_start);
+                            if next <= segment_end {
+                                break;
+                            }
+                            if next.saturating_sub(segment_start) > wrap_width {
+                                break;
+                            }
+                            segment_end = next;
+                        }
+
+                        if segment_end == segment_start {
+                            segment_end = next_offset(
+                                text,
+                                tab_width,
+                                line_start.saturating_add(segment_start),
+                            )
+                            .saturating_sub(line_start)
+                            .max(segment_start.saturating_add(1))
+                            .min(line_width);
+                        }
+
                         virtual_lines.push(VirtualLine {
-                            start_offset: line_start.saturating_add(start_col),
-                            width_cols,
+                            start_offset: line_start.saturating_add(segment_start),
+                            width_cols: segment_end.saturating_sub(segment_start),
                             source_line: source_line as u32,
                             wrap_index,
                         });
+                        wrap_index = wrap_index.saturating_add(1);
+                        segment_start = segment_end;
                     }
                 }
             }

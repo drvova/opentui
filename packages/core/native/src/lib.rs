@@ -48,8 +48,8 @@ use optimized_buffer::{
 use renderer_state::RendererState;
 use syntax_style::{Rgba, SyntaxStyleState};
 use terminal_state::CursorStyleOptions as TerminalCursorStyleOptions;
-use text_buffer::{TextBufferState, copy_bytes_to_out, text_width};
-use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
+use text_buffer::{StyleSpan, TextBufferState, copy_bytes_to_out, text_width};
+use text_buffer_view::{NO_SELECTION, TextBufferViewState, VisibleLine, copy_selected_text};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
@@ -88,6 +88,7 @@ const BUILD_PROFILE_CSTR: &[u8] = concat!(env!("OPENTUI_BUILD_PROFILE"), "\0").a
 const CRATE_VERSION_CSTR: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
 static NEXT_LINK_ID: AtomicU32 = AtomicU32::new(1);
 static NEXT_GRAPHEME_ID: AtomicU32 = AtomicU32::new(1);
+const INVERSE_ATTRIBUTE: u32 = 1 << 5;
 static LINK_REGISTRY: OnceLock<Mutex<HashMap<u32, Vec<u8>>>> = OnceLock::new();
 static GRAPHEME_REGISTRY: OnceLock<Mutex<HashMap<u32, GraphemeEntry>>> = OnceLock::new();
 static LOG_CALLBACK: OnceLock<Mutex<Option<usize>>> = OnceLock::new();
@@ -138,6 +139,262 @@ const fn static_cstr(bytes: &'static [u8]) -> *const c_char {
 
 fn color_from_ptr(ptr: *const f32) -> Rgba {
     unsafe { std::ptr::read_unaligned(ptr.cast::<Rgba>()) }
+}
+
+fn resolve_line_style(
+    syntax_style: Option<&SyntaxStyleState>,
+    spans: &[StyleSpan],
+    segment_col: u32,
+    default_fg: Rgba,
+    default_bg: Rgba,
+    default_attributes: u32,
+) -> (Rgba, Rgba, u32) {
+    let mut fg = default_fg;
+    let mut bg = default_bg;
+    let mut attributes = default_attributes;
+
+    let style_id = spans
+        .iter()
+        .find(|span| span.col <= segment_col && segment_col < span.next_col)
+        .map(|span| span.style_id)
+        .unwrap_or(0);
+
+    if style_id != 0 {
+        if let Some(style) = syntax_style.and_then(|syntax_style| syntax_style.resolve_by_id(style_id)) {
+            if let Some(style_fg) = style.fg {
+                fg = style_fg;
+            }
+            if let Some(style_bg) = style.bg {
+                bg = style_bg;
+            }
+            attributes |= style.attributes;
+        }
+    }
+
+    (fg, bg, attributes)
+}
+
+fn collect_line_boundaries(line: &VisibleLine, spans: &[StyleSpan]) -> Vec<u32> {
+    let mut boundaries = vec![line.start_offset, line.end_offset];
+
+    if let Some(selection_start) = line.selection_start {
+        if selection_start > line.start_offset && selection_start < line.end_offset {
+            boundaries.push(selection_start);
+        }
+    }
+    if let Some(selection_end) = line.selection_end {
+        if selection_end > line.start_offset && selection_end < line.end_offset {
+            boundaries.push(selection_end);
+        }
+    }
+
+    for span in spans {
+        let start = line
+            .line_start_offset()
+            .saturating_add(span.col.max(line.source_col_start).min(line.source_col_end));
+        let end = line
+            .line_start_offset()
+            .saturating_add(span.next_col.max(line.source_col_start).min(line.source_col_end));
+        if start < end {
+            boundaries.push(start);
+            boundaries.push(end);
+        }
+    }
+
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    boundaries
+}
+
+fn clip_visible_line(line: &VisibleLine, viewport_x: u32, viewport_width: u32) -> VisibleLine {
+    if viewport_width == 0 {
+        return *line;
+    }
+
+    let clipped_source_start = line
+        .source_col_start
+        .saturating_add(viewport_x)
+        .min(line.source_col_end);
+    let clipped_source_end = clipped_source_start
+        .saturating_add(viewport_width)
+        .min(line.source_col_end);
+    let start_offset = line
+        .start_offset
+        .saturating_add(clipped_source_start.saturating_sub(line.source_col_start));
+    let end_offset = start_offset.saturating_add(clipped_source_end.saturating_sub(clipped_source_start));
+
+    VisibleLine {
+        source_col_start: clipped_source_start,
+        source_col_end: clipped_source_end,
+        start_offset,
+        end_offset,
+        ..*line
+    }
+}
+
+fn draw_truncated_line(
+    buffer: &mut NativeOptimizedBuffer,
+    text_at: impl Fn(u32, u32) -> String + Copy,
+    line: &VisibleLine,
+    spans: &[StyleSpan],
+    syntax_style: Option<&SyntaxStyleState>,
+    x: usize,
+    row: usize,
+    default_fg: Rgba,
+    default_bg: Rgba,
+    default_attributes: u32,
+    selection_bg: Option<Rgba>,
+    selection_fg: Option<Rgba>,
+    tab_width: u8,
+    viewport_width: u32,
+) {
+    let visible_width = viewport_width.min(line.source_col_end.saturating_sub(line.source_col_start));
+    if visible_width == 0 {
+        return;
+    }
+    if visible_width <= 3 || line.source_col_end.saturating_sub(line.source_col_start) <= visible_width {
+        draw_visible_line(
+            buffer,
+            text_at,
+            &clip_visible_line(line, 0, visible_width),
+            spans,
+            syntax_style,
+            x,
+            row,
+            default_fg,
+            default_bg,
+            default_attributes,
+            selection_bg,
+            selection_fg,
+            tab_width,
+        );
+        return;
+    }
+
+    let prefix_cols = (visible_width - 3) / 2;
+    let suffix_cols = visible_width - 3 - prefix_cols;
+    let prefix_line = VisibleLine {
+        source_col_end: line.source_col_start.saturating_add(prefix_cols),
+        end_offset: line.start_offset.saturating_add(prefix_cols),
+        ..*line
+    };
+    let suffix_start_offset = line.end_offset.saturating_sub(suffix_cols);
+    let suffix_line = VisibleLine {
+        source_col_start: line.source_col_end.saturating_sub(suffix_cols),
+        start_offset: suffix_start_offset,
+        ..*line
+    };
+
+    draw_visible_line(
+        buffer,
+        text_at,
+        &prefix_line,
+        spans,
+        syntax_style,
+        x,
+        row,
+        default_fg,
+        default_bg,
+        default_attributes,
+        selection_bg,
+        selection_fg,
+        tab_width,
+    );
+
+    let hidden_start = prefix_line.end_offset;
+    let hidden_end = suffix_line.start_offset;
+    let mut ellipsis_fg = default_fg;
+    let mut ellipsis_bg = default_bg;
+    if let (Some(selection_start), Some(selection_end)) = (line.selection_start, line.selection_end) {
+        if selection_start < hidden_end && selection_end > hidden_start {
+            if let Some(selection_bg) = selection_bg {
+                ellipsis_bg = selection_bg;
+                if let Some(selection_fg) = selection_fg {
+                    ellipsis_fg = selection_fg;
+                }
+            } else {
+                (ellipsis_fg, ellipsis_bg) = (
+                    if default_bg[3] > 0.0 { default_bg } else { [0.0, 0.0, 0.0, 1.0] },
+                    default_fg,
+                );
+            }
+        }
+    }
+    let _ = buffer.draw_text(x + prefix_cols as usize, row, "...", ellipsis_fg, ellipsis_bg, default_attributes);
+
+    draw_visible_line(
+        buffer,
+        text_at,
+        &suffix_line,
+        spans,
+        syntax_style,
+        x + prefix_cols as usize + 3,
+        row,
+        default_fg,
+        default_bg,
+        default_attributes,
+        selection_bg,
+        selection_fg,
+        tab_width,
+    );
+}
+
+fn draw_visible_line(
+    buffer: &mut NativeOptimizedBuffer,
+    text_at: impl Fn(u32, u32) -> String,
+    line: &VisibleLine,
+    spans: &[StyleSpan],
+    syntax_style: Option<&SyntaxStyleState>,
+    x: usize,
+    row: usize,
+    default_fg: Rgba,
+    default_bg: Rgba,
+    default_attributes: u32,
+    selection_bg: Option<Rgba>,
+    selection_fg: Option<Rgba>,
+    tab_width: u8,
+) {
+    let boundaries = collect_line_boundaries(line, spans);
+    let mut cursor_x = x;
+
+    for window in boundaries.windows(2) {
+        let [start, end] = <[u32; 2]>::try_from(window).unwrap_or([0, 0]);
+        if start >= end {
+            continue;
+        }
+
+        let text = text_at(start, end);
+        if text.is_empty() {
+            continue;
+        }
+
+        let segment_col = start.saturating_sub(line.line_start_offset());
+        let (mut fg, mut bg, attributes) =
+            resolve_line_style(syntax_style, spans, segment_col, default_fg, default_bg, default_attributes);
+
+        if let (Some(selection_start), Some(selection_end)) = (line.selection_start, line.selection_end) {
+            if selection_start <= start && end <= selection_end {
+                if let Some(selection_bg) = selection_bg {
+                    bg = selection_bg;
+                    if let Some(selection_fg) = selection_fg {
+                        fg = selection_fg;
+                    }
+                } else {
+                    (fg, bg) = (
+                        if bg[3] > 0.0 { bg } else { [0.0, 0.0, 0.0, 1.0] },
+                        fg,
+                    );
+                }
+            }
+        }
+
+        if attributes & INVERSE_ATTRIBUTE != 0 {
+            (fg, bg) = (bg, fg);
+        }
+
+        let _ = buffer.draw_text(cursor_x, row, &text, fg, bg, attributes);
+        cursor_x += text_width(&text, tab_width) as usize;
+    }
 }
 
 fn link_registry() -> &'static Mutex<HashMap<u32, Vec<u8>>> {
@@ -3174,53 +3431,66 @@ pub extern "C" fn bufferDrawTextBufferView(
     let (selection_bg, selection_fg) = view.selection_colors();
     let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
     let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+    let default_attributes = view.default_attributes().unwrap_or(0);
+    let syntax_style = view.syntax_style();
 
     for line in view.visible_lines() {
         let row = y + i32::try_from(line.viewport_row).unwrap_or(i32::MAX);
         if row < 0 || row >= i32::try_from(buffer.height()).unwrap_or(i32::MAX) {
             continue;
         }
-        let row = row as usize;
-        if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
-            let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
-            let selected = view.rendered_text_for_offsets(sel_start, sel_end);
-            let after = view.rendered_text_for_offsets(sel_end, line.end_offset);
-            let before_width = text_width(&before, view.tab_width()) as usize;
-            let selected_width = text_width(&selected, view.tab_width()) as usize;
-
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0),
-                row,
-                &before,
-                default_fg,
-                default_bg,
-                0,
-            );
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0) + before_width,
-                row,
-                &selected,
-                selection_fg.unwrap_or(default_fg),
-                selection_bg.unwrap_or(default_fg),
-                0,
-            );
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0) + before_width + selected_width,
-                row,
-                &after,
-                default_fg,
-                default_bg,
-                0,
-            );
+        let spans = view.line_spans(line.source_line as usize);
+        if view.wrap_mode() == 0 {
+            if view.truncate() {
+                draw_truncated_line(
+                    buffer,
+                    |start, end| view.rendered_text_for_offsets(start, end),
+                    &line,
+                    spans,
+                    syntax_style,
+                    usize::try_from(x).unwrap_or(0),
+                    row as usize,
+                    default_fg,
+                    default_bg,
+                    default_attributes,
+                    selection_bg,
+                    selection_fg,
+                    view.tab_width(),
+                    view.viewport_width(),
+                );
+            } else {
+                let clipped = clip_visible_line(&line, view.viewport_x(), view.viewport_width());
+                draw_visible_line(
+                    buffer,
+                    |start, end| view.rendered_text_for_offsets(start, end),
+                    &clipped,
+                    spans,
+                    syntax_style,
+                    usize::try_from(x).unwrap_or(0),
+                    row as usize,
+                    default_fg,
+                    default_bg,
+                    default_attributes,
+                    selection_bg,
+                    selection_fg,
+                    view.tab_width(),
+                );
+            }
         } else {
-            let text = view.rendered_text_for_offsets(line.start_offset, line.end_offset);
-            let _ = buffer.draw_text(
+            draw_visible_line(
+                buffer,
+                |start, end| view.rendered_text_for_offsets(start, end),
+                &line,
+                spans,
+                syntax_style,
                 usize::try_from(x).unwrap_or(0),
-                row,
-                &text,
+                row as usize,
                 default_fg,
                 default_bg,
-                0,
+                default_attributes,
+                selection_bg,
+                selection_fg,
+                view.tab_width(),
             );
         }
     }
@@ -3242,6 +3512,8 @@ pub extern "C" fn bufferDrawEditorView(
     let (selection_bg, selection_fg) = view.selection_colors();
     let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
     let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+    let default_attributes = view.default_attributes().unwrap_or(0);
+    let syntax_style = view.syntax_style();
 
     if let Some(placeholder) = view.placeholder_text() {
         for (row_index, line) in placeholder.split('\n').enumerate() {
@@ -3256,7 +3528,7 @@ pub extern "C" fn bufferDrawEditorView(
                 line,
                 default_fg,
                 default_bg,
-                0,
+                default_attributes,
             );
         }
         return;
@@ -3267,47 +3539,58 @@ pub extern "C" fn bufferDrawEditorView(
         if row < 0 || row >= i32::try_from(buffer.height()).unwrap_or(i32::MAX) {
             continue;
         }
-        let row = row as usize;
-        if let (Some(sel_start), Some(sel_end)) = (line.selection_start, line.selection_end) {
-            let before = view.rendered_text_for_offsets(line.start_offset, sel_start);
-            let selected = view.rendered_text_for_offsets(sel_start, sel_end);
-            let after = view.rendered_text_for_offsets(sel_end, line.end_offset);
-            let before_width = text_width(&before, view.tab_width()) as usize;
-            let selected_width = text_width(&selected, view.tab_width()) as usize;
-
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0),
-                row,
-                &before,
-                default_fg,
-                default_bg,
-                0,
-            );
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0) + before_width,
-                row,
-                &selected,
-                selection_fg.unwrap_or(default_fg),
-                selection_bg.unwrap_or(default_fg),
-                0,
-            );
-            let _ = buffer.draw_text(
-                usize::try_from(x).unwrap_or(0) + before_width + selected_width,
-                row,
-                &after,
-                default_fg,
-                default_bg,
-                0,
-            );
+        let spans = view.line_spans(line.source_line as usize);
+        if view.wrap_mode() == 0 {
+            if view.truncate() {
+                draw_truncated_line(
+                    buffer,
+                    |start, end| view.rendered_text_for_offsets(start, end),
+                    &line,
+                    spans,
+                    syntax_style,
+                    usize::try_from(x).unwrap_or(0),
+                    row as usize,
+                    default_fg,
+                    default_bg,
+                    default_attributes,
+                    selection_bg,
+                    selection_fg,
+                    view.tab_width(),
+                    view.viewport_width(),
+                );
+            } else {
+                let clipped = clip_visible_line(&line, view.viewport_x(), view.viewport_width());
+                draw_visible_line(
+                    buffer,
+                    |start, end| view.rendered_text_for_offsets(start, end),
+                    &clipped,
+                    spans,
+                    syntax_style,
+                    usize::try_from(x).unwrap_or(0),
+                    row as usize,
+                    default_fg,
+                    default_bg,
+                    default_attributes,
+                    selection_bg,
+                    selection_fg,
+                    view.tab_width(),
+                );
+            }
         } else {
-            let text = view.rendered_text_for_offsets(line.start_offset, line.end_offset);
-            let _ = buffer.draw_text(
+            draw_visible_line(
+                buffer,
+                |start, end| view.rendered_text_for_offsets(start, end),
+                &line,
+                spans,
+                syntax_style,
                 usize::try_from(x).unwrap_or(0),
-                row,
-                &text,
+                row as usize,
                 default_fg,
                 default_bg,
-                0,
+                default_attributes,
+                selection_bg,
+                selection_fg,
+                view.tab_width(),
             );
         }
     }
