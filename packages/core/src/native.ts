@@ -95,6 +95,12 @@ registerEnvVar({
   type: "boolean",
   default: false,
 })
+registerEnvVar({
+  name: "OPENTUI_NATIVE_INPUT",
+  description: "Read terminal key, mouse, paste, and focus events through the native runtime after capability bootstrap",
+  type: "boolean",
+  default: true,
+})
 
 // Cursor & mouse pointer style mappings (avoid recreation on each call)
 const CURSOR_STYLE_TO_ID = { block: 0, line: 1, underline: 2, default: 3 } as const
@@ -169,6 +175,18 @@ function getOpenTUILib(libPath?: string) {
     },
     render: {
       args: ["ptr", "bool"],
+      returns: "void",
+    },
+    startNativeInputLoop: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    stopNativeInputLoop: {
+      args: ["ptr"],
+      returns: "void",
+    },
+    pumpNativeInputEvents: {
+      args: ["ptr"],
       returns: "void",
     },
     getNextBuffer: {
@@ -779,6 +797,9 @@ export interface RenderLib {
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
+  startNativeInputLoop: (renderer: Pointer) => void
+  stopNativeInputLoop: (renderer: Pointer) => void
+  pumpNativeInputEvents: (renderer: Pointer) => void
   getNextBuffer: (renderer: Pointer) => OptimizedBuffer
   getCurrentBuffer: (renderer: Pointer) => OptimizedBuffer
   createOptimizedBuffer: (
@@ -1800,6 +1821,18 @@ class FFIRenderLib implements RenderLib {
 
   public render(renderer: Pointer, force: boolean) {
     this.opentui.symbols.render(renderer, force)
+  }
+
+  public startNativeInputLoop(renderer: Pointer): void {
+    this.opentui.symbols.startNativeInputLoop(renderer)
+  }
+
+  public stopNativeInputLoop(renderer: Pointer): void {
+    this.opentui.symbols.stopNativeInputLoop(renderer)
+  }
+
+  public pumpNativeInputEvents(renderer: Pointer): void {
+    this.opentui.symbols.pumpNativeInputEvents(renderer)
   }
 
   public createOptimizedBuffer(

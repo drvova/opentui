@@ -14,6 +14,7 @@ mod native_span_feed;
 mod optimized_buffer;
 mod renderer_state;
 mod syntax_style;
+mod terminal_input;
 mod terminal_state;
 mod text_buffer;
 mod text_buffer_view;
@@ -537,6 +538,19 @@ fn event_callback() -> &'static Mutex<Option<usize>> {
     EVENT_CALLBACK.get_or_init(|| Mutex::new(None))
 }
 
+fn emit_native_event(name: &[u8], payload: &[u8]) {
+    let callback_ptr = *event_callback().lock().unwrap();
+    let Some(callback_ptr) = callback_ptr else {
+        return;
+    };
+
+    type EventCallback = unsafe extern "C" fn(*const u8, usize, *const u8, usize);
+    let callback: EventCallback = unsafe { std::mem::transmute(callback_ptr) };
+    unsafe {
+        callback(name.as_ptr(), name.len(), payload.as_ptr(), payload.len());
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn linkAlloc(url_ptr: *const u8, url_len: usize) -> u32 {
     if url_ptr.is_null() {
@@ -734,6 +748,33 @@ pub extern "C" fn render(renderer: *mut NativeRenderer, _force: bool) {
     }
     let renderer = unsafe { &mut *renderer };
     renderer.render();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn startNativeInputLoop(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer_ref = unsafe { &mut *renderer };
+    renderer_ref.start_input_loop(renderer as usize as u64);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn stopNativeInputLoop(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer_ref = unsafe { &mut *renderer };
+    renderer_ref.stop_input_loop();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pumpNativeInputEvents(renderer: *mut NativeRenderer) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer_ref = unsafe { &mut *renderer };
+    renderer_ref.pump_input_events();
 }
 
 #[unsafe(no_mangle)]

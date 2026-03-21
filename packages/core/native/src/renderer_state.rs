@@ -1,4 +1,9 @@
-use crate::{Rgba, optimized_buffer::OptimizedBuffer, terminal_state::TerminalState};
+use std::collections::VecDeque;
+
+use crate::{
+    Rgba, emit_native_event, optimized_buffer::OptimizedBuffer, terminal_input::TerminalInputBridge,
+    terminal_state::TerminalState,
+};
 
 #[derive(Clone, Copy, Debug)]
 struct ClipRect {
@@ -46,6 +51,8 @@ pub struct RendererState {
     hit_grid_height: u32,
     hit_grid_dirty: bool,
     hit_grid_scissor_stack: Vec<ClipRect>,
+    input_bridge: Option<TerminalInputBridge>,
+    pending_input_events: VecDeque<crate::terminal_input::QueuedInputEvent>,
 }
 
 impl RendererState {
@@ -77,6 +84,8 @@ impl RendererState {
             hit_grid_height: height,
             hit_grid_dirty: false,
             hit_grid_scissor_stack: Vec::new(),
+            input_bridge: None,
+            pending_input_events: VecDeque::new(),
         }
     }
 
@@ -200,6 +209,30 @@ impl RendererState {
         self.hit_grid_scissor_stack.clear();
     }
 
+    pub fn start_input_loop(&mut self, renderer_ptr: u64) {
+        if self.input_bridge.is_some() {
+            return;
+        }
+        self.input_bridge = Some(TerminalInputBridge::start(renderer_ptr));
+    }
+
+    pub fn stop_input_loop(&mut self) {
+        if let Some(mut bridge) = self.input_bridge.take() {
+            bridge.stop();
+        }
+        self.pending_input_events.clear();
+    }
+
+    pub fn pump_input_events(&mut self) {
+        if let Some(bridge) = &self.input_bridge {
+            bridge.drain(&mut self.pending_input_events);
+        }
+
+        while let Some(event) = self.pending_input_events.pop_front() {
+            emit_native_event(event.name.as_bytes(), &event.payload);
+        }
+    }
+
     fn clip_rect(&self, x: i32, y: i32, width: u32, height: u32) -> Option<ClipRect> {
         let rect = ClipRect {
             x,
@@ -223,6 +256,7 @@ impl RendererState {
 
 impl Drop for RendererState {
     fn drop(&mut self) {
+        self.stop_input_loop();
         self.terminal.teardown_terminal();
     }
 }
