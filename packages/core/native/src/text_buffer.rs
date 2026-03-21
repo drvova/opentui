@@ -241,7 +241,7 @@ fn normalize_text_bytes(data: &[u8]) -> String {
     normalized
 }
 
-fn text_width(text: &str, tab_width: u8) -> u32 {
+pub(crate) fn text_width(text: &str, tab_width: u8) -> u32 {
     let mut width = 0_u32;
     for ch in text.chars() {
         match ch {

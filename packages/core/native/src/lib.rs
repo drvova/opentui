@@ -5,6 +5,7 @@ use core::ffi::{c_char, c_uint};
 mod native_span_feed;
 mod syntax_style;
 mod text_buffer;
+mod text_buffer_view;
 
 pub type NativeSpanFeedCallbackFn = native_span_feed::CallbackFn;
 pub type NativeSpanFeedOptions = native_span_feed::Options;
@@ -14,10 +15,12 @@ pub type NativeSpanFeedStats = native_span_feed::Stats;
 pub type NativeSpanFeedStream = native_span_feed::Stream;
 pub type NativeStyledChunk = text_buffer::StyledChunk;
 pub type NativeTextBuffer = text_buffer::TextBufferState;
+pub type NativeTextBufferView = text_buffer_view::TextBufferViewState;
 
 use native_span_feed::{default_options as default_native_span_feed_options, error_to_status};
 use syntax_style::{Rgba, SyntaxStyleState};
 use text_buffer::{TextBufferState, copy_bytes_to_out};
+use text_buffer_view::{NO_SELECTION, TextBufferViewState, copy_selected_text};
 
 const ABI_SYMBOL_COUNT: c_uint = parse_symbol_count();
 const ABI_HASH_CSTR: &[u8] = concat!(env!("OPENTUI_ABI_SYMBOL_HASH"), "\0").as_bytes();
@@ -436,6 +439,165 @@ pub extern "C" fn textBufferGetTextRangeByCoords(
     let tb = unsafe { &*tb };
     let text = tb.text_range_by_coords(start_row, start_col, end_row, end_col);
     copy_bytes_to_out(text.as_bytes(), out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createTextBufferView(tb: *mut NativeTextBuffer) -> *mut NativeTextBufferView {
+    if tb.is_null() {
+        return core::ptr::null_mut();
+    }
+
+    Box::into_raw(Box::new(TextBufferViewState::new(tb)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroyTextBufferView(view: *mut NativeTextBufferView) {
+    if view.is_null() {
+        return;
+    }
+
+    unsafe {
+        drop(Box::from_raw(view));
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetSelection(
+    view: *mut NativeTextBufferView,
+    start: u32,
+    end: u32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_selection(start, end);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewResetSelection(view: *mut NativeTextBufferView) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.reset_selection();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetSelectionInfo(view: *const NativeTextBufferView) -> u64 {
+    if view.is_null() {
+        return NO_SELECTION;
+    }
+
+    let view = unsafe { &*view };
+    view.selection_info()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewUpdateSelection(
+    view: *mut NativeTextBufferView,
+    end: u32,
+    _bg_color: *const f32,
+    _fg_color: *const f32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.update_selection(end);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetWrapWidth(view: *mut NativeTextBufferView, width: u32) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_wrap_width(width);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetWrapMode(view: *mut NativeTextBufferView, mode: u8) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_wrap_mode(mode);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetViewportSize(
+    view: *mut NativeTextBufferView,
+    width: u32,
+    height: u32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_viewport_size(width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewSetViewport(
+    view: *mut NativeTextBufferView,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) {
+    if view.is_null() {
+        return;
+    }
+
+    let view = unsafe { &mut *view };
+    view.set_viewport(x, y, width, height);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetVirtualLineCount(view: *const NativeTextBufferView) -> u32 {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    view.virtual_line_count()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetSelectedText(
+    view: *const NativeTextBufferView,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    copy_selected_text(view, out_ptr, max_len)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn textBufferViewGetPlainText(
+    view: *const NativeTextBufferView,
+    out_ptr: *mut u8,
+    max_len: usize,
+) -> usize {
+    if view.is_null() {
+        return 0;
+    }
+
+    let view = unsafe { &*view };
+    copy_bytes_to_out(view.plain_text_bytes(), out_ptr, max_len)
 }
 
 #[unsafe(no_mangle)]
