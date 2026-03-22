@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use yoga::{Direction, Display, Edge, FlexDirection, Layout, Node, Overflow, PositionType, StyleUnit};
+use yoga::{Align, Direction, Display, Edge, FlexDirection, Gutter, Justify, Layout, Node, Overflow, PositionType, StyleUnit, Wrap};
 
 static NEXT_SCENE_NODE_ID: AtomicU64 = AtomicU64::new(1);
 static SCENE_GRAPH: OnceLock<Mutex<SceneGraph>> = OnceLock::new();
@@ -40,6 +40,19 @@ pub struct NativeSceneStyle {
     pub padding_right: f32,
     pub padding_bottom: f32,
     pub padding_left: f32,
+    pub margin_all: f32,
+    pub margin_horizontal: f32,
+    pub margin_vertical: f32,
+    pub padding_all: f32,
+    pub padding_horizontal: f32,
+    pub padding_vertical: f32,
+    pub gap_all: f32,
+    pub gap_row: f32,
+    pub gap_column: f32,
+    pub border_top: f32,
+    pub border_right: f32,
+    pub border_bottom: f32,
+    pub border_left: f32,
     pub width_unit: u8,
     pub height_unit: u8,
     pub min_width_unit: u8,
@@ -59,10 +72,23 @@ pub struct NativeSceneStyle {
     pub padding_right_unit: u8,
     pub padding_bottom_unit: u8,
     pub padding_left_unit: u8,
+    pub margin_all_unit: u8,
+    pub margin_horizontal_unit: u8,
+    pub margin_vertical_unit: u8,
+    pub padding_all_unit: u8,
+    pub padding_horizontal_unit: u8,
+    pub padding_vertical_unit: u8,
+    pub gap_all_unit: u8,
+    pub gap_row_unit: u8,
+    pub gap_column_unit: u8,
     pub display: u8,
     pub flex_direction: u8,
     pub position_type: u8,
     pub overflow: u8,
+    pub flex_wrap: u8,
+    pub align_items: u8,
+    pub justify_content: u8,
+    pub align_self: u8,
 }
 
 #[derive(Debug)]
@@ -254,16 +280,90 @@ fn apply_style(node: &mut Node, style: NativeSceneStyle) {
     node.set_position(Edge::Right, style_unit(style.right, style.right_unit));
     node.set_position(Edge::Top, style_unit(style.top, style.top_unit));
     node.set_position(Edge::Bottom, style_unit(style.bottom, style.bottom_unit));
-    node.set_margin(Edge::Top, style_unit(style.margin_top, style.margin_top_unit));
-    node.set_margin(Edge::Right, style_unit(style.margin_right, style.margin_right_unit));
-    node.set_margin(Edge::Bottom, style_unit(style.margin_bottom, style.margin_bottom_unit));
-    node.set_margin(Edge::Left, style_unit(style.margin_left, style.margin_left_unit));
-    node.set_padding(Edge::Top, style_unit(style.padding_top, style.padding_top_unit));
-    node.set_padding(Edge::Right, style_unit(style.padding_right, style.padding_right_unit));
-    node.set_padding(Edge::Bottom, style_unit(style.padding_bottom, style.padding_bottom_unit));
-    node.set_padding(Edge::Left, style_unit(style.padding_left, style.padding_left_unit));
+    if style.margin_all_unit != 3 {
+        node.set_margin(Edge::All, style_unit(style.margin_all, style.margin_all_unit));
+    }
+    if style.margin_horizontal_unit != 3 {
+        node.set_margin(
+            Edge::Horizontal,
+            style_unit(style.margin_horizontal, style.margin_horizontal_unit),
+        );
+    }
+    if style.margin_vertical_unit != 3 {
+        node.set_margin(
+            Edge::Vertical,
+            style_unit(style.margin_vertical, style.margin_vertical_unit),
+        );
+    }
+    if style.margin_top_unit != 3 {
+        node.set_margin(Edge::Top, style_unit(style.margin_top, style.margin_top_unit));
+    }
+    if style.margin_right_unit != 3 {
+        node.set_margin(Edge::Right, style_unit(style.margin_right, style.margin_right_unit));
+    }
+    if style.margin_bottom_unit != 3 {
+        node.set_margin(
+            Edge::Bottom,
+            style_unit(style.margin_bottom, style.margin_bottom_unit),
+        );
+    }
+    if style.margin_left_unit != 3 {
+        node.set_margin(Edge::Left, style_unit(style.margin_left, style.margin_left_unit));
+    }
+    if style.padding_all_unit != 3 {
+        node.set_padding(Edge::All, style_unit(style.padding_all, style.padding_all_unit));
+    }
+    if style.padding_horizontal_unit != 3 {
+        node.set_padding(
+            Edge::Horizontal,
+            style_unit(style.padding_horizontal, style.padding_horizontal_unit),
+        );
+    }
+    if style.padding_vertical_unit != 3 {
+        node.set_padding(
+            Edge::Vertical,
+            style_unit(style.padding_vertical, style.padding_vertical_unit),
+        );
+    }
+    if style.padding_top_unit != 3 {
+        node.set_padding(Edge::Top, style_unit(style.padding_top, style.padding_top_unit));
+    }
+    if style.padding_right_unit != 3 {
+        node.set_padding(
+            Edge::Right,
+            style_unit(style.padding_right, style.padding_right_unit),
+        );
+    }
+    if style.padding_bottom_unit != 3 {
+        node.set_padding(
+            Edge::Bottom,
+            style_unit(style.padding_bottom, style.padding_bottom_unit),
+        );
+    }
+    if style.padding_left_unit != 3 {
+        node.set_padding(Edge::Left, style_unit(style.padding_left, style.padding_left_unit));
+    }
+    if style.gap_all_unit != 3 {
+        let gap_all = style_unit(style.gap_all, style.gap_all_unit);
+        node.set_gap(Gutter::Row, gap_all);
+        node.set_gap(Gutter::Column, gap_all);
+    }
+    if style.gap_row_unit != 3 {
+        node.set_gap(Gutter::Row, style_unit(style.gap_row, style.gap_row_unit));
+    }
+    if style.gap_column_unit != 3 {
+        node.set_gap(
+            Gutter::Column,
+            style_unit(style.gap_column, style.gap_column_unit),
+        );
+    }
+    node.set_border(Edge::Top, style.border_top);
+    node.set_border(Edge::Right, style.border_right);
+    node.set_border(Edge::Bottom, style.border_bottom);
+    node.set_border(Edge::Left, style.border_left);
     node.set_display(match style.display {
         1 => Display::None,
+        2 => Display::Contents,
         _ => Display::Flex,
     });
     node.set_flex_direction(match style.flex_direction {
@@ -271,6 +371,41 @@ fn apply_style(node: &mut Node, style: NativeSceneStyle) {
         2 => FlexDirection::Row,
         3 => FlexDirection::RowReverse,
         _ => FlexDirection::Column,
+    });
+    node.set_flex_wrap(match style.flex_wrap {
+        1 => Wrap::Wrap,
+        2 => Wrap::WrapReverse,
+        _ => Wrap::NoWrap,
+    });
+    node.set_align_items(match style.align_items {
+        1 => Align::FlexStart,
+        2 => Align::Center,
+        3 => Align::FlexEnd,
+        4 => Align::Stretch,
+        5 => Align::Baseline,
+        6 => Align::SpaceBetween,
+        7 => Align::SpaceAround,
+        8 => Align::SpaceEvenly,
+        _ => Align::Auto,
+    });
+    node.set_justify_content(match style.justify_content {
+        1 => Justify::Center,
+        2 => Justify::FlexEnd,
+        3 => Justify::SpaceBetween,
+        4 => Justify::SpaceAround,
+        5 => Justify::SpaceEvenly,
+        _ => Justify::FlexStart,
+    });
+    node.set_align_self(match style.align_self {
+        1 => Align::FlexStart,
+        2 => Align::Center,
+        3 => Align::FlexEnd,
+        4 => Align::Stretch,
+        5 => Align::Baseline,
+        6 => Align::SpaceBetween,
+        7 => Align::SpaceAround,
+        8 => Align::SpaceEvenly,
+        _ => Align::Auto,
     });
     node.set_position_type(match style.position_type {
         1 => PositionType::Absolute,
@@ -322,7 +457,7 @@ pub extern "C" fn sceneNodeSetStyle(id: u64, style_ptr: *const NativeSceneStyle)
     if style_ptr.is_null() {
         return false;
     }
-    let style = unsafe { *style_ptr };
+    let style = unsafe { std::ptr::read_unaligned(style_ptr) };
     scene_graph().lock().unwrap().set_style(id, style)
 }
 
@@ -344,7 +479,7 @@ pub extern "C" fn sceneNodeGetLayout(id: u64, out_ptr: *mut NativeSceneLayout) -
         return false;
     };
     unsafe {
-        *out_ptr = layout;
+        std::ptr::write_unaligned(out_ptr, layout);
     }
     true
 }
@@ -357,6 +492,11 @@ pub extern "C" fn sceneNodeGetChildCount(id: u64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{NativeSceneLayout, NativeSceneStyle, createSceneNode, destroySceneNode, sceneNodeAppendChild, sceneNodeCalculateLayout, sceneNodeGetChildCount, sceneNodeGetLayout, sceneNodeSetStyle};
+
+    #[test]
+    fn native_scene_style_abi_size_is_stable() {
+        assert_eq!(std::mem::size_of::<NativeSceneStyle>(), 172);
+    }
 
     #[test]
     fn scene_graph_calculates_simple_column_layout() {

@@ -1,5 +1,19 @@
 import { EventEmitter } from "events"
-import Yoga, { Direction, Display, Edge, FlexDirection, type Config, type Node as YogaNode } from "yoga-layout"
+import Yoga, {
+  Align,
+  Direction,
+  Display,
+  Edge,
+  FlexDirection,
+  Gutter,
+  Justify,
+  Overflow,
+  PositionType,
+  Unit,
+  Wrap,
+  type Config,
+  type Node as YogaNode,
+} from "yoga-layout"
 import { OptimizedBuffer } from "./buffer.js"
 import type { KeyEvent, PasteEvent } from "./lib/KeyHandler.js"
 import type { MouseEventType } from "./lib/parse.mouse.js"
@@ -200,17 +214,20 @@ const yogaConfig: Config = Yoga.Config.create()
 yogaConfig.setUseWebDefaults(false)
 yogaConfig.setPointScaleFactor(1)
 
-function styleUnitValue(value: number | "auto" | `${number}%` | undefined): number {
-  if (typeof value === "number") return value
-  if (typeof value === "string" && value.endsWith("%")) return Number.parseFloat(value)
+type YogaValue = { unit: number; value: number | null }
+
+function yogaUnitKind(unit: number): number {
+  if (unit === Unit.Auto) return 1
+  if (unit === Unit.Percent) return 2
+  if (unit === Unit.Undefined) return 3
   return 0
 }
 
-function styleUnitKind(value: number | "auto" | `${number}%` | undefined): number {
-  if (value === "auto") return 1
-  if (typeof value === "string" && value.endsWith("%")) return 2
-  if (value === undefined) return 3
-  return 0
+function yogaValue(value: YogaValue): { value: number; unit: number } {
+  return {
+    value: typeof value.value === "number" && Number.isFinite(value.value) ? value.value : 0,
+    unit: yogaUnitKind(value.unit),
+  }
 }
 
 function overflowKind(value: OverflowString): number {
@@ -219,11 +236,75 @@ function overflowKind(value: OverflowString): number {
   return 0
 }
 
+function overflowEnumKind(value: Overflow): number {
+  if (value === Overflow.Hidden) return 1
+  if (value === Overflow.Scroll) return 2
+  return 0
+}
+
+function displayKind(value: Display): number {
+  if (value === Display.None) return 1
+  if (value === Display.Contents) return 2
+  return 0
+}
+
 function flexDirectionKind(primaryAxis: "row" | "column", rawDirection: FlexDirection): number {
   if (primaryAxis === "row") {
     return rawDirection === FlexDirection.RowReverse ? 3 : 2
   }
   return rawDirection === FlexDirection.ColumnReverse ? 1 : 0
+}
+
+function wrapKind(value: Wrap): number {
+  if (value === Wrap.Wrap) return 1
+  if (value === Wrap.WrapReverse) return 2
+  return 0
+}
+
+function alignKind(value: Align): number {
+  switch (value) {
+    case Align.FlexStart:
+      return 1
+    case Align.Center:
+      return 2
+    case Align.FlexEnd:
+      return 3
+    case Align.Stretch:
+      return 4
+    case Align.Baseline:
+      return 5
+    case Align.SpaceBetween:
+      return 6
+    case Align.SpaceAround:
+      return 7
+    case Align.SpaceEvenly:
+      return 8
+    default:
+      return 0
+  }
+}
+
+function justifyKind(value: Justify): number {
+  switch (value) {
+    case Justify.Center:
+      return 1
+    case Justify.FlexEnd:
+      return 2
+    case Justify.SpaceBetween:
+      return 3
+    case Justify.SpaceAround:
+      return 4
+    case Justify.SpaceEvenly:
+      return 5
+    default:
+      return 0
+  }
+}
+
+function positionTypeKind(value: PositionType): number {
+  if (value === PositionType.Absolute) return 1
+  if (value === PositionType.Static) return 2
+  return 0
 }
 
 export abstract class Renderable extends BaseRenderable {
@@ -529,51 +610,107 @@ export abstract class Renderable extends BaseRenderable {
   protected syncNativeSceneStyle(): void {
     if (this.sceneNodeHandle == null) return
 
+    const node = this.yogaNode
+    const width = yogaValue(node.getWidth())
+    const height = yogaValue(node.getHeight())
+    const minWidth = yogaValue(node.getMinWidth())
+    const minHeight = yogaValue(node.getMinHeight())
+    const maxWidth = yogaValue(node.getMaxWidth())
+    const maxHeight = yogaValue(node.getMaxHeight())
+    const flexBasis = yogaValue(node.getFlexBasis())
+    const left = yogaValue(node.getPosition(Edge.Left))
+    const right = yogaValue(node.getPosition(Edge.Right))
+    const top = yogaValue(node.getPosition(Edge.Top))
+    const bottom = yogaValue(node.getPosition(Edge.Bottom))
+    const marginAll = yogaValue(node.getMargin(Edge.All))
+    const marginHorizontal = yogaValue(node.getMargin(Edge.Horizontal))
+    const marginVertical = yogaValue(node.getMargin(Edge.Vertical))
+    const marginTop = yogaValue(node.getMargin(Edge.Top))
+    const marginRight = yogaValue(node.getMargin(Edge.Right))
+    const marginBottom = yogaValue(node.getMargin(Edge.Bottom))
+    const marginLeft = yogaValue(node.getMargin(Edge.Left))
+    const paddingAll = yogaValue(node.getPadding(Edge.All))
+    const paddingHorizontal = yogaValue(node.getPadding(Edge.Horizontal))
+    const paddingVertical = yogaValue(node.getPadding(Edge.Vertical))
+    const paddingTop = yogaValue(node.getPadding(Edge.Top))
+    const paddingRight = yogaValue(node.getPadding(Edge.Right))
+    const paddingBottom = yogaValue(node.getPadding(Edge.Bottom))
+    const paddingLeft = yogaValue(node.getPadding(Edge.Left))
+    const gapAll = yogaValue(node.getGap(Gutter.All))
+    const gapRow = yogaValue(node.getGap(Gutter.Row))
+    const gapColumn = yogaValue(node.getGap(Gutter.Column))
+
     const style = {
-      width: styleUnitValue(this._width),
-      height: styleUnitValue(this._height),
-      minWidth: 0,
-      minHeight: 0,
-      maxWidth: 0,
-      maxHeight: 0,
-      flexGrow: 0,
-      flexShrink: this._flexShrink,
-      flexBasis: 0,
-      left: styleUnitValue(this._position.left),
-      right: styleUnitValue(this._position.right),
-      top: styleUnitValue(this._position.top),
-      bottom: styleUnitValue(this._position.bottom),
-      marginTop: 0,
-      marginRight: 0,
-      marginBottom: 0,
-      marginLeft: 0,
-      paddingTop: 0,
-      paddingRight: 0,
-      paddingBottom: 0,
-      paddingLeft: 0,
-      widthUnit: styleUnitKind(this._width),
-      heightUnit: styleUnitKind(this._height),
-      minWidthUnit: 3,
-      minHeightUnit: 3,
-      maxWidthUnit: 3,
-      maxHeightUnit: 3,
-      flexBasisUnit: 3,
-      leftUnit: styleUnitKind(this._position.left),
-      rightUnit: styleUnitKind(this._position.right),
-      topUnit: styleUnitKind(this._position.top),
-      bottomUnit: styleUnitKind(this._position.bottom),
-      marginTopUnit: 3,
-      marginRightUnit: 3,
-      marginBottomUnit: 3,
-      marginLeftUnit: 3,
-      paddingTopUnit: 3,
-      paddingRightUnit: 3,
-      paddingBottomUnit: 3,
-      paddingLeftUnit: 3,
-      display: this._visible ? 0 : 1,
-      flexDirection: flexDirectionKind(this.primaryAxis, this.yogaNode.getFlexDirection()),
-      positionType: this._positionType === "absolute" ? 1 : 0,
-      overflow: overflowKind(this._overflow),
+      width: width.value,
+      height: height.value,
+      minWidth: minWidth.value,
+      minHeight: minHeight.value,
+      maxWidth: maxWidth.value,
+      maxHeight: maxHeight.value,
+      flexGrow: node.getFlexGrow(),
+      flexShrink: node.getFlexShrink(),
+      flexBasis: flexBasis.value,
+      left: left.value,
+      right: right.value,
+      top: top.value,
+      bottom: bottom.value,
+      marginTop: marginTop.value,
+      marginRight: marginRight.value,
+      marginBottom: marginBottom.value,
+      marginLeft: marginLeft.value,
+      paddingTop: paddingTop.value,
+      paddingRight: paddingRight.value,
+      paddingBottom: paddingBottom.value,
+      paddingLeft: paddingLeft.value,
+      widthUnit: width.unit,
+      heightUnit: height.unit,
+      minWidthUnit: minWidth.unit,
+      minHeightUnit: minHeight.unit,
+      maxWidthUnit: maxWidth.unit,
+      maxHeightUnit: maxHeight.unit,
+      flexBasisUnit: flexBasis.unit,
+      leftUnit: left.unit,
+      rightUnit: right.unit,
+      topUnit: top.unit,
+      bottomUnit: bottom.unit,
+      marginTopUnit: marginTop.unit,
+      marginRightUnit: marginRight.unit,
+      marginBottomUnit: marginBottom.unit,
+      marginLeftUnit: marginLeft.unit,
+      paddingTopUnit: paddingTop.unit,
+      paddingRightUnit: paddingRight.unit,
+      paddingBottomUnit: paddingBottom.unit,
+      paddingLeftUnit: paddingLeft.unit,
+      display: displayKind(node.getDisplay()),
+      flexDirection: flexDirectionKind(this.primaryAxis, node.getFlexDirection()),
+      positionType: positionTypeKind(node.getPositionType()),
+      overflow: overflowEnumKind(node.getOverflow()),
+      marginAll: marginAll.value,
+      marginHorizontal: marginHorizontal.value,
+      marginVertical: marginVertical.value,
+      paddingAll: paddingAll.value,
+      paddingHorizontal: paddingHorizontal.value,
+      paddingVertical: paddingVertical.value,
+      gapAll: gapAll.value,
+      gapRow: gapRow.value,
+      gapColumn: gapColumn.value,
+      borderTop: node.getBorder(Edge.Top) ?? 0,
+      borderRight: node.getBorder(Edge.Right) ?? 0,
+      borderBottom: node.getBorder(Edge.Bottom) ?? 0,
+      borderLeft: node.getBorder(Edge.Left) ?? 0,
+      marginAllUnit: marginAll.unit,
+      marginHorizontalUnit: marginHorizontal.unit,
+      marginVerticalUnit: marginVertical.unit,
+      paddingAllUnit: paddingAll.unit,
+      paddingHorizontalUnit: paddingHorizontal.unit,
+      paddingVerticalUnit: paddingVertical.unit,
+      gapAllUnit: gapAll.unit,
+      gapRowUnit: gapRow.unit,
+      gapColumnUnit: gapColumn.unit,
+      flexWrap: wrapKind(node.getFlexWrap()),
+      alignItems: alignKind(node.getAlignItems()),
+      justifyContent: justifyKind(node.getJustifyContent()),
+      alignSelf: alignKind(node.getAlignSelf()),
     }
 
     try {
@@ -1733,6 +1870,7 @@ export class RootRenderable extends Renderable {
     this.yogaNode.setWidth(ctx.width)
     this.yogaNode.setHeight(ctx.height)
     this.yogaNode.setFlexDirection(FlexDirection.Column)
+    this.syncNativeSceneStyle()
 
     this.calculateLayout()
   }
