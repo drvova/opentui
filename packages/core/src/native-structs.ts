@@ -176,7 +176,7 @@ export const TextTableMeasureConfigStruct = defineStruct([
 
 export const SceneRenderCommandStruct = defineStruct([
   ["kind", "u8", { default: 0 }],
-  ["reserved0", "u8", { default: 0 }],
+  ["hasClip", "u8", { default: 0 }],
   ["reserved1", "u8", { default: 0 }],
   ["reserved2", "u8", { default: 0 }],
   ["renderableNum", "u32", { default: 0 }],
@@ -186,6 +186,10 @@ export const SceneRenderCommandStruct = defineStruct([
   ["height", "u32", { default: 0 }],
   ["screenX", "i32", { default: 0 }],
   ["screenY", "i32", { default: 0 }],
+  ["clipX", "i32", { default: 0 }],
+  ["clipY", "i32", { default: 0 }],
+  ["clipWidth", "u32", { default: 0 }],
+  ["clipHeight", "u32", { default: 0 }],
   ["opacity", "f32", { default: 1 }],
 ])
 

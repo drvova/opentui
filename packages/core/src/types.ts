@@ -102,6 +102,7 @@ export interface RenderContext extends EventEmitter {
   sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
   sceneNodeBuildRenderPlan: (handle: bigint | number) => Array<{
     kind: number
+    hasClip: number
     renderableNum: number
     x: number
     y: number
@@ -109,9 +110,24 @@ export interface RenderContext extends EventEmitter {
     height: number
     screenX: number
     screenY: number
+    clipX: number
+    clipY: number
+    clipWidth: number
+    clipHeight: number
     opacity: number
   }>
   addToHitGrid: (x: number, y: number, width: number, height: number, id: number) => void
+  addToHitGridWithinClip: (
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    clipX: number,
+    clipY: number,
+    clipWidth: number,
+    clipHeight: number,
+    id: number,
+  ) => void
   pushHitGridScissorRect: (x: number, y: number, width: number, height: number) => void
   popHitGridScissorRect: () => void
   clearHitGridScissorRects: () => void

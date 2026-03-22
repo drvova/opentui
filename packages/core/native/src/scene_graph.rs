@@ -11,6 +11,14 @@ use yoga::{
 static NEXT_SCENE_NODE_ID: AtomicU64 = AtomicU64::new(1);
 static SCENE_GRAPH: OnceLock<Mutex<SceneGraph>> = OnceLock::new();
 
+#[derive(Clone, Copy, Debug)]
+struct ClipRect {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeSceneLayout {
@@ -123,7 +131,7 @@ pub struct NativeTextTableMeasureConfig {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeSceneRenderCommand {
     pub kind: u8,
-    pub reserved0: u8,
+    pub has_clip: u8,
     pub reserved1: u8,
     pub reserved2: u8,
     pub renderable_num: u32,
@@ -133,6 +141,10 @@ pub struct NativeSceneRenderCommand {
     pub height: u32,
     pub screen_x: i32,
     pub screen_y: i32,
+    pub clip_x: i32,
+    pub clip_y: i32,
+    pub clip_width: u32,
+    pub clip_height: u32,
     pub opacity: f32,
 }
 
@@ -561,7 +573,7 @@ impl SceneGraph {
         };
 
         for child in self.child_handles_by_z_index(root).unwrap_or_else(|| root_node.children.clone()) {
-            self.build_render_plan_for_node(child, 0, 0, out);
+            self.build_render_plan_for_node(child, 0, 0, None, out);
         }
         true
     }
@@ -571,6 +583,7 @@ impl SceneGraph {
         id: u64,
         parent_x: i32,
         parent_y: i32,
+        inherited_clip: Option<ClipRect>,
         out: &mut Vec<NativeSceneRenderCommand>,
     ) {
         let Some(node) = self.nodes.get(&id) else {
@@ -595,14 +608,20 @@ impl SceneGraph {
 
         out.push(NativeSceneRenderCommand {
             kind: 0,
+            has_clip: u8::from(inherited_clip.is_some()),
             renderable_num: node.renderable_num,
             x,
             y,
             width,
             height,
+            clip_x: inherited_clip.map(|clip| clip.x).unwrap_or_default(),
+            clip_y: inherited_clip.map(|clip| clip.y).unwrap_or_default(),
+            clip_width: inherited_clip.map(|clip| clip.width).unwrap_or_default(),
+            clip_height: inherited_clip.map(|clip| clip.height).unwrap_or_default(),
             ..NativeSceneRenderCommand::default()
         });
 
+        let mut child_clip = inherited_clip;
         if node.overflow != 0 && width > 0 && height > 0 {
             let left_inset = if node.yoga.get_layout_border_left() > 0.0 {
                 1
@@ -631,6 +650,14 @@ impl SceneGraph {
                 width.saturating_sub((left_inset as u32).saturating_add(right_inset as u32));
             let scissor_height =
                 height.saturating_sub((top_inset as u32).saturating_add(bottom_inset as u32));
+            let screen_scissor = ClipRect {
+                x: x + left_inset,
+                y: y + top_inset,
+                width: scissor_width,
+                height: scissor_height,
+            };
+
+            child_clip = merge_clip_rects(inherited_clip, Some(screen_scissor));
 
             out.push(NativeSceneRenderCommand {
                 kind: 1,
@@ -657,7 +684,7 @@ impl SceneGraph {
         };
 
         for child in ordered_children {
-            self.build_render_plan_for_node(child, x, y, out);
+            self.build_render_plan_for_node(child, x, y, child_clip, out);
         }
 
         if node.overflow != 0 && width > 0 && height > 0 {
@@ -1692,6 +1719,37 @@ pub extern "C" fn sceneNodeBuildRenderPlan(
     }
 
     count
+}
+
+fn intersect_rects(left: ClipRect, right: ClipRect) -> Option<ClipRect> {
+    let x1 = left.x.max(right.x);
+    let y1 = left.y.max(right.y);
+    let x2 = (left.x + left.width as i32).min(right.x + right.width as i32);
+    let y2 = (left.y + left.height as i32).min(right.y + right.height as i32);
+    if x2 <= x1 || y2 <= y1 {
+        return None;
+    }
+
+    Some(ClipRect {
+        x: x1,
+        y: y1,
+        width: (x2 - x1) as u32,
+        height: (y2 - y1) as u32,
+    })
+}
+
+fn merge_clip_rects(left: Option<ClipRect>, right: Option<ClipRect>) -> Option<ClipRect> {
+    match (left, right) {
+        (Some(left), Some(right)) => intersect_rects(left, right).or(Some(ClipRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        })),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]

@@ -936,6 +936,36 @@ pub extern "C" fn addToCurrentHitGridClipped(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn addToHitGridWithinRect(
+    renderer: *mut NativeRenderer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    clip_x: i32,
+    clip_y: i32,
+    clip_width: u32,
+    clip_height: u32,
+    id: u32,
+) {
+    if renderer.is_null() {
+        return;
+    }
+    let renderer = unsafe { &mut *renderer };
+    renderer.add_to_hit_grid_with_clip(
+        x,
+        y,
+        width,
+        height,
+        clip_x,
+        clip_y,
+        clip_width,
+        clip_height,
+        id,
+    );
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn checkHit(renderer: *const NativeRenderer, x: u32, y: u32) -> u32 {
     if renderer.is_null() {
         return 0;

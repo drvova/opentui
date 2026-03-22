@@ -2130,7 +2130,6 @@ export class RootRenderable extends Renderable {
     }
 
     const commands = this._ctx.sceneNodeBuildRenderPlan(this.sceneNodeHandle)
-    this._ctx.clearHitGridScissorRects()
 
     this._ctx.setExecutingNativeRenderPlan(true)
     try {
@@ -2139,18 +2138,30 @@ export class RootRenderable extends Renderable {
           case NativeRenderCommandKind.Render: {
             const renderable = Renderable.renderablesByNumber.get(command.renderableNum)
             if (renderable && !renderable.isDestroyed) {
-              this._ctx.addToHitGrid(command.x, command.y, command.width, command.height, command.renderableNum)
+              if (command.hasClip) {
+                this._ctx.addToHitGridWithinClip(
+                  command.x,
+                  command.y,
+                  command.width,
+                  command.height,
+                  command.clipX,
+                  command.clipY,
+                  command.clipWidth,
+                  command.clipHeight,
+                  command.renderableNum,
+                )
+              } else {
+                this._ctx.addToHitGrid(command.x, command.y, command.width, command.height, command.renderableNum)
+              }
               renderable.render(buffer, deltaTime)
             }
             break
           }
           case NativeRenderCommandKind.PushScissorRect:
             buffer.pushScissorRect(command.x, command.y, command.width, command.height)
-            this._ctx.pushHitGridScissorRect(command.screenX, command.screenY, command.width, command.height)
             break
           case NativeRenderCommandKind.PopScissorRect:
             buffer.popScissorRect()
-            this._ctx.popHitGridScissorRect()
             break
           case NativeRenderCommandKind.PushOpacity:
             buffer.pushOpacity(command.opacity)

@@ -877,6 +877,33 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }
 
+  public addToHitGridWithinClip(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    clipX: number,
+    clipY: number,
+    clipWidth: number,
+    clipHeight: number,
+    id: number,
+  ) {
+    if (id !== this.capturedRenderable?.num) {
+      this.lib.addToHitGridWithinRect(
+        this.rendererPtr,
+        x,
+        y,
+        width,
+        height,
+        clipX,
+        clipY,
+        clipWidth,
+        clipHeight,
+        id,
+      )
+    }
+  }
+
   public isExecutingNativeRenderPlan(): boolean {
     return this.executingNativeRenderPlan
   }
@@ -1141,6 +1168,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public sceneNodeBuildRenderPlan(handle: bigint | number): Array<{
     kind: number
+    hasClip: number
     renderableNum: number
     x: number
     y: number
@@ -1148,6 +1176,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     height: number
     screenX: number
     screenY: number
+    clipX: number
+    clipY: number
+    clipWidth: number
+    clipHeight: number
     opacity: number
   }> {
     return this.lib.sceneNodeBuildRenderPlan(handle)

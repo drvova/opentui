@@ -137,3 +137,38 @@ test("native scene graph matches Yoga layout for wrap and alignment styles", asy
 
   renderer.destroy()
 })
+
+test("native render plan carries ancestor clip state for hit-grid registration", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const container = new BoxRenderable(renderer, {
+    width: 10,
+    height: 4,
+    overflow: "hidden",
+  })
+  const child = new BoxRenderable(renderer, {
+    width: 6,
+    height: 2,
+    left: 8,
+    position: "absolute",
+  })
+
+  renderer.root.add(container)
+  container.add(child)
+  await renderOnce()
+
+  const rootHandle = (renderer.root as any).sceneNodeHandle
+  const commands = renderer.sceneNodeBuildRenderPlan(rootHandle)
+  const childCommand = commands.find((command) => command.renderableNum === child.num)
+
+  expect(childCommand).toBeTruthy()
+  expect(childCommand).toMatchObject({
+    hasClip: 1,
+    clipX: container.x,
+    clipY: container.y,
+    clipWidth: container.width,
+    clipHeight: container.height,
+  })
+
+  renderer.destroy()
+})

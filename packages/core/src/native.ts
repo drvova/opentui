@@ -510,6 +510,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["ptr", "i32", "i32", "u32", "u32", "u32"],
       returns: "void",
     },
+    addToHitGridWithinRect: {
+      args: ["ptr", "i32", "i32", "u32", "u32", "i32", "i32", "u32", "u32", "u32"],
+      returns: "void",
+    },
     checkHit: {
       args: ["ptr", "u32", "u32"],
       returns: "u32",
@@ -1065,6 +1069,18 @@ export interface RenderLib {
     y: number,
     width: number,
     height: number,
+    id: number,
+  ) => void
+  addToHitGridWithinRect: (
+    renderer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    clipX: number,
+    clipY: number,
+    clipWidth: number,
+    clipHeight: number,
     id: number,
   ) => void
   checkHit: (renderer: Pointer, x: number, y: number) => number
@@ -2065,6 +2081,7 @@ class FFIRenderLib implements RenderLib {
 
   public sceneNodeBuildRenderPlan(handle: bigint | number): Array<{
     kind: number
+    hasClip: number
     renderableNum: number
     x: number
     y: number
@@ -2072,6 +2089,10 @@ class FFIRenderLib implements RenderLib {
     height: number
     screenX: number
     screenY: number
+    clipX: number
+    clipY: number
+    clipWidth: number
+    clipHeight: number
     opacity: number
   }> {
     const subtreeCount = this.sceneNodeGetSubtreeNodeCount(handle)
@@ -2193,6 +2214,32 @@ class FFIRenderLib implements RenderLib {
     id: number,
   ) {
     this.opentui.symbols.addToCurrentHitGridClipped(renderer, x, y, width, height, id)
+  }
+
+  public addToHitGridWithinRect(
+    renderer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    clipX: number,
+    clipY: number,
+    clipWidth: number,
+    clipHeight: number,
+    id: number,
+  ) {
+    this.opentui.symbols.addToHitGridWithinRect(
+      renderer,
+      x,
+      y,
+      width,
+      height,
+      clipX,
+      clipY,
+      clipWidth,
+      clipHeight,
+      id,
+    )
   }
 
   public checkHit(renderer: Pointer, x: number, y: number): number {

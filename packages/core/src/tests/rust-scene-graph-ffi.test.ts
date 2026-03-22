@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { dlopen, ptr } from "bun:ffi"
 import { expect, test } from "bun:test"
 
-import { SceneLayoutStruct, SceneStyleStruct } from "../native-structs.js"
+import { SceneLayoutStruct, SceneRenderCommandStruct, SceneStyleStruct } from "../native-structs.js"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -62,7 +62,7 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
   expect(Number(lib.sceneNodeGetChildrenByZIndex(root, ptr(zIndexBuffer.buffer), 2))).toBe(2)
   expect(Array.from(zIndexBuffer)).toEqual([second, first])
 
-  const renderPlanBuffer = new ArrayBuffer(4 * 40)
+  const renderPlanBuffer = new ArrayBuffer(SceneRenderCommandStruct.size * 4)
   const renderPlanCount = Number(lib.sceneNodeBuildRenderPlan(root, ptr(renderPlanBuffer), 4))
   expect(renderPlanCount).toBeGreaterThan(0)
   expect(lib.sceneNodeCalculateLayout(root, 120, 40)).toBe(true)

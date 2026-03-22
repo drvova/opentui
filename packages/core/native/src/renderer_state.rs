@@ -154,6 +154,47 @@ impl RendererState {
         self.add_to_hit_grid(rect.x, rect.y, rect.width, rect.height, id);
     }
 
+    pub fn add_to_hit_grid_with_clip(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        clip_x: i32,
+        clip_y: i32,
+        clip_width: u32,
+        clip_height: u32,
+        id: u32,
+    ) {
+        let rect = ClipRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let bounds = ClipRect {
+            x: 0,
+            y: 0,
+            width: self.hit_grid_width,
+            height: self.hit_grid_height,
+        };
+        let Some(clipped_to_bounds) = intersect_rects(rect, bounds) else {
+            return;
+        };
+        let Some(clipped) = intersect_rects(
+            clipped_to_bounds,
+            ClipRect {
+                x: clip_x,
+                y: clip_y,
+                width: clip_width,
+                height: clip_height,
+            },
+        ) else {
+            return;
+        };
+        self.add_to_hit_grid(clipped.x, clipped.y, clipped.width, clipped.height, id);
+    }
+
     pub fn check_hit(&self, x: u32, y: u32) -> u32 {
         if x >= self.hit_grid_width || y >= self.hit_grid_height {
             return 0;
