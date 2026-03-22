@@ -228,6 +228,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64"],
       returns: "usize",
     },
+    sceneNodeGetChildrenByZIndex: {
+      args: ["u64", "ptr", "usize"],
+      returns: "usize",
+    },
     sceneNodeGetChildren: {
       args: ["u64", "ptr", "usize"],
       returns: "usize",
@@ -879,6 +883,7 @@ export interface RenderLib {
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
   sceneNodeGetChildren: (handle: bigint | number) => Array<bigint | number>
+  sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
   startNativeInputLoop: (renderer: Pointer) => void
   stopNativeInputLoop: (renderer: Pointer) => void
   pumpNativeInputEvents: (renderer: Pointer) => void
@@ -2000,6 +2005,18 @@ class FFIRenderLib implements RenderLib {
 
     const buffer = new ArrayBuffer(count * BigUint64Array.BYTES_PER_ELEMENT)
     const resolvedCount = toNumber(this.opentui.symbols.sceneNodeGetChildren(handle, ptr(buffer), count))
+    const raw = new BigUint64Array(buffer)
+    return Array.from(raw.slice(0, resolvedCount))
+  }
+
+  public sceneNodeGetChildrenByZIndex(handle: bigint | number): Array<bigint | number> {
+    const count = this.sceneNodeGetChildCount(handle)
+    if (count <= 0) {
+      return []
+    }
+
+    const buffer = new ArrayBuffer(count * BigUint64Array.BYTES_PER_ELEMENT)
+    const resolvedCount = toNumber(this.opentui.symbols.sceneNodeGetChildrenByZIndex(handle, ptr(buffer), count))
     const raw = new BigUint64Array(buffer)
     return Array.from(raw.slice(0, resolvedCount))
   }

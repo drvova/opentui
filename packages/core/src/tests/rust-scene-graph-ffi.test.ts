@@ -35,6 +35,7 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
     sceneNodeGetLayout: { args: ["u64", "ptr"], returns: "bool" },
     sceneNodeGetChildCount: { args: ["u64"], returns: "usize" },
     sceneNodeGetChildren: { args: ["u64", "ptr", "usize"], returns: "usize" },
+    sceneNodeGetChildrenByZIndex: { args: ["u64", "ptr", "usize"], returns: "usize" },
   }).symbols
 
   const root = lib.createSceneNode()
@@ -44,17 +45,21 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
   expect(typeof root === "bigint" ? root : BigInt(root)).toBeGreaterThan(0n)
 
   const rootStyle = SceneStyleStruct.pack({ width: 120, height: 40, widthUnit: 0, heightUnit: 0 })
-  const childStyle = SceneStyleStruct.pack({ width: 30, height: 10, widthUnit: 0, heightUnit: 0 })
+  const childStyle = SceneStyleStruct.pack({ width: 30, height: 10, widthUnit: 0, heightUnit: 0, zIndex: 1 })
+  const childStyleFront = SceneStyleStruct.pack({ width: 30, height: 10, widthUnit: 0, heightUnit: 0, zIndex: 0 })
 
   expect(lib.sceneNodeSetStyle(root, ptr(rootStyle))).toBe(true)
   expect(lib.sceneNodeSetStyle(first, ptr(childStyle))).toBe(true)
-  expect(lib.sceneNodeSetStyle(second, ptr(childStyle))).toBe(true)
+  expect(lib.sceneNodeSetStyle(second, ptr(childStyleFront))).toBe(true)
   expect(lib.sceneNodeAppendChild(root, first)).toBe(true)
   expect(lib.sceneNodeInsertBefore(root, second, first)).toBe(true)
   expect(Number(lib.sceneNodeGetChildCount(root))).toBe(2)
   const childBuffer = new BigUint64Array(2)
   expect(Number(lib.sceneNodeGetChildren(root, ptr(childBuffer.buffer), 2))).toBe(2)
   expect(Array.from(childBuffer)).toEqual([second, first])
+  const zIndexBuffer = new BigUint64Array(2)
+  expect(Number(lib.sceneNodeGetChildrenByZIndex(root, ptr(zIndexBuffer.buffer), 2))).toBe(2)
+  expect(Array.from(zIndexBuffer)).toEqual([second, first])
   expect(lib.sceneNodeCalculateLayout(root, 120, 40)).toBe(true)
 
   const layoutBuffer = new ArrayBuffer(SceneLayoutStruct.size)

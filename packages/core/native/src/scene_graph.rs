@@ -57,6 +57,7 @@ pub struct NativeSceneStyle {
     pub border_right: f32,
     pub border_bottom: f32,
     pub border_left: f32,
+    pub z_index: f32,
     pub width_unit: u8,
     pub height_unit: u8,
     pub min_width_unit: u8,
@@ -147,6 +148,7 @@ impl Default for NativeSceneStyle {
             border_right: 0.0,
             border_bottom: 0.0,
             border_left: 0.0,
+            z_index: 0.0,
             width_unit: 3,
             height_unit: 3,
             min_width_unit: 3,
@@ -193,6 +195,7 @@ struct SceneNode {
     parent: Option<u64>,
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
+    z_index: f32,
 }
 
 unsafe impl Send for SceneNode {}
@@ -250,6 +253,7 @@ impl SceneGraph {
                 parent: None,
                 children: Vec::new(),
                 measure: None,
+                z_index: 0.0,
             }),
         );
         if let Some(node) = self.nodes.get_mut(&id) {
@@ -338,6 +342,7 @@ impl SceneGraph {
             return false;
         };
         apply_style(&mut node.yoga, style);
+        node.z_index = style.z_index;
         true
     }
 
@@ -457,6 +462,17 @@ impl SceneGraph {
 
     fn child_handles(&self, id: u64) -> Option<&[u64]> {
         self.nodes.get(&id).map(|node| node.children.as_slice())
+    }
+
+    fn child_handles_by_z_index(&self, id: u64) -> Option<Vec<u64>> {
+        let parent = self.nodes.get(&id)?;
+        let mut ordered = parent.children.clone();
+        ordered.sort_by(|a, b| {
+            let az = self.nodes.get(a).map(|node| node.z_index).unwrap_or(0.0);
+            let bz = self.nodes.get(b).map(|node| node.z_index).unwrap_or(0.0);
+            az.partial_cmp(&bz).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Some(ordered)
     }
 
     fn insert_child(&mut self, parent: u64, child: u64, index: usize) -> bool {
@@ -1407,13 +1423,34 @@ pub extern "C" fn sceneNodeGetChildren(id: u64, out_ptr: *mut u64, max_count: us
     count
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeGetChildrenByZIndex(id: u64, out_ptr: *mut u64, max_count: usize) -> usize {
+    if out_ptr.is_null() || max_count == 0 {
+        return 0;
+    }
+
+    let graph = scene_graph().lock().unwrap();
+    let Some(children) = graph.child_handles_by_z_index(id) else {
+        return 0;
+    };
+
+    let count = children.len().min(max_count);
+    for (index, child) in children.iter().take(count).enumerate() {
+        unsafe {
+            std::ptr::write_unaligned(out_ptr.add(index), *child);
+        }
+    }
+
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NativeSceneLayout, NativeSceneStyle, createSceneNode, destroySceneNode, sceneNodeAppendChild, sceneNodeCalculateLayout, sceneNodeGetChildCount, sceneNodeGetLayout, sceneNodeSetStyle};
 
     #[test]
     fn native_scene_style_abi_size_is_stable() {
-        assert_eq!(std::mem::size_of::<NativeSceneStyle>(), 172);
+        assert_eq!(std::mem::size_of::<NativeSceneStyle>(), 176);
     }
 
     #[test]

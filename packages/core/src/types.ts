@@ -97,6 +97,7 @@ export interface RenderContext extends EventEmitter {
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
   sceneNodeGetChildren: (handle: bigint | number) => Array<bigint | number>
+  sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
   addToHitGrid: (x: number, y: number, width: number, height: number, id: number) => void
   pushHitGridScissorRect: (x: number, y: number, width: number, height: number) => void
   popHitGridScissorRect: () => void

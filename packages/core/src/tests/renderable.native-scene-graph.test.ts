@@ -63,6 +63,24 @@ test("Renderable child reads prefer native scene graph order", async () => {
   renderer.destroy()
 })
 
+test("Renderable uses native z-index child order for traversal", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const parent = new BoxRenderable(renderer, { width: 20, height: 10 })
+  const back = new BoxRenderable(renderer, { id: "back", width: 5, height: 2, zIndex: 10 })
+  const front = new BoxRenderable(renderer, { id: "front", width: 5, height: 2, zIndex: 0 })
+
+  renderer.root.add(parent)
+  parent.add(back)
+  parent.add(front)
+  await renderOnce()
+
+  ;(parent as any).ensureZIndexSorted()
+  expect((parent as any)._getVisibleChildren()).toEqual([front.num, back.num])
+
+  renderer.destroy()
+})
+
 test("native scene graph matches Yoga layout for spacing and border styles", async () => {
   const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
 

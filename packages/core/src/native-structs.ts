@@ -209,6 +209,7 @@ export const SceneStyleStruct = defineStruct([
   ["borderRight", "f32", { default: 0 }],
   ["borderBottom", "f32", { default: 0 }],
   ["borderLeft", "f32", { default: 0 }],
+  ["zIndex", "f32", { default: 0 }],
   ["widthUnit", "u8", { default: 3 }],
   ["heightUnit", "u8", { default: 3 }],
   ["minWidthUnit", "u8", { default: 3 }],

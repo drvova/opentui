@@ -706,6 +706,7 @@ export abstract class Renderable extends BaseRenderable {
       borderRight: node.getBorder(Edge.Right) ?? 0,
       borderBottom: node.getBorder(Edge.Bottom) ?? 0,
       borderLeft: node.getBorder(Edge.Left) ?? 0,
+      zIndex: this._zIndex,
       marginAllUnit: marginAll.unit,
       marginHorizontalUnit: marginHorizontal.unit,
       marginVerticalUnit: marginVertical.unit,
@@ -865,6 +866,15 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   private ensureZIndexSorted(): void {
+    if (this.sceneNodeHandle != null) {
+      const handles = this._ctx.sceneNodeGetChildrenByZIndex(this.sceneNodeHandle)
+      this._childrenInZIndexOrder = handles
+        .map((handle) => Renderable.renderablesBySceneHandle.get(handle))
+        .filter((child): child is Renderable => Boolean(child))
+      this.needsZIndexSort = false
+      return
+    }
+
     const currentChildren = this.getChildren()
     if (this.needsZIndexSort || this._childrenInZIndexOrder.length !== currentChildren.length) {
       this._childrenInZIndexOrder = [...currentChildren].sort((a, b) =>
