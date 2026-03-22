@@ -154,6 +154,60 @@ export const GridDrawOptionsStruct = defineStruct([
   ["drawOuter", "bool_u8", { default: true }],
 ])
 
+export const SceneLayoutStruct = defineStruct([
+  ["left", "f32"],
+  ["top", "f32"],
+  ["width", "f32"],
+  ["height", "f32"],
+])
+
+export const SceneStyleStruct = defineStruct([
+  ["width", "f32", { default: 0 }],
+  ["height", "f32", { default: 0 }],
+  ["minWidth", "f32", { default: 0 }],
+  ["minHeight", "f32", { default: 0 }],
+  ["maxWidth", "f32", { default: 0 }],
+  ["maxHeight", "f32", { default: 0 }],
+  ["flexGrow", "f32", { default: 0 }],
+  ["flexShrink", "f32", { default: 1 }],
+  ["flexBasis", "f32", { default: 0 }],
+  ["left", "f32", { default: 0 }],
+  ["right", "f32", { default: 0 }],
+  ["top", "f32", { default: 0 }],
+  ["bottom", "f32", { default: 0 }],
+  ["marginTop", "f32", { default: 0 }],
+  ["marginRight", "f32", { default: 0 }],
+  ["marginBottom", "f32", { default: 0 }],
+  ["marginLeft", "f32", { default: 0 }],
+  ["paddingTop", "f32", { default: 0 }],
+  ["paddingRight", "f32", { default: 0 }],
+  ["paddingBottom", "f32", { default: 0 }],
+  ["paddingLeft", "f32", { default: 0 }],
+  ["widthUnit", "u8", { default: 3 }],
+  ["heightUnit", "u8", { default: 3 }],
+  ["minWidthUnit", "u8", { default: 3 }],
+  ["minHeightUnit", "u8", { default: 3 }],
+  ["maxWidthUnit", "u8", { default: 3 }],
+  ["maxHeightUnit", "u8", { default: 3 }],
+  ["flexBasisUnit", "u8", { default: 3 }],
+  ["leftUnit", "u8", { default: 3 }],
+  ["rightUnit", "u8", { default: 3 }],
+  ["topUnit", "u8", { default: 3 }],
+  ["bottomUnit", "u8", { default: 3 }],
+  ["marginTopUnit", "u8", { default: 3 }],
+  ["marginRightUnit", "u8", { default: 3 }],
+  ["marginBottomUnit", "u8", { default: 3 }],
+  ["marginLeftUnit", "u8", { default: 3 }],
+  ["paddingTopUnit", "u8", { default: 3 }],
+  ["paddingRightUnit", "u8", { default: 3 }],
+  ["paddingBottomUnit", "u8", { default: 3 }],
+  ["paddingLeftUnit", "u8", { default: 3 }],
+  ["display", "u8", { default: 0 }],
+  ["flexDirection", "u8", { default: 0 }],
+  ["positionType", "u8", { default: 0 }],
+  ["overflow", "u8", { default: 0 }],
+])
+
 export type BuildOptions = {
   gpaSafeStats: boolean
   gpaMemoryLimitTracking: boolean

@@ -200,6 +200,32 @@ const yogaConfig: Config = Yoga.Config.create()
 yogaConfig.setUseWebDefaults(false)
 yogaConfig.setPointScaleFactor(1)
 
+function styleUnitValue(value: number | "auto" | `${number}%` | undefined): number {
+  if (typeof value === "number") return value
+  if (typeof value === "string" && value.endsWith("%")) return Number.parseFloat(value)
+  return 0
+}
+
+function styleUnitKind(value: number | "auto" | `${number}%` | undefined): number {
+  if (value === "auto") return 1
+  if (typeof value === "string" && value.endsWith("%")) return 2
+  if (value === undefined) return 3
+  return 0
+}
+
+function overflowKind(value: OverflowString): number {
+  if (value === "hidden") return 1
+  if (value === "scroll") return 2
+  return 0
+}
+
+function flexDirectionKind(primaryAxis: "row" | "column", rawDirection: FlexDirection): number {
+  if (primaryAxis === "row") {
+    return rawDirection === FlexDirection.RowReverse ? 3 : 2
+  }
+  return rawDirection === FlexDirection.ColumnReverse ? 1 : 0
+}
+
 export abstract class Renderable extends BaseRenderable {
   static renderablesByNumber: Map<number, Renderable> = new Map()
 
@@ -233,6 +259,7 @@ export abstract class Renderable extends BaseRenderable {
   private _keyListeners: Partial<Record<"down", (key: KeyEvent) => void>> = {}
 
   protected yogaNode: YogaNode
+  protected sceneNodeHandle: bigint | number | null = null
   protected _positionType: PositionTypeString = "relative"
   protected _overflow: OverflowString = "visible"
   protected _position: Position = {}
@@ -286,6 +313,8 @@ export abstract class Renderable extends BaseRenderable {
     this.yogaNode = Yoga.Node.create(yogaConfig)
     this.yogaNode.setDisplay(this._visible ? Display.Flex : Display.None)
     this.setupYogaProperties(options)
+    this.createNativeSceneNode()
+    this.syncNativeSceneStyle()
 
     this.applyEventOptions(options)
 
@@ -472,8 +501,86 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public requestRender() {
+    this.syncNativeSceneStyle()
     this.markDirty()
     this._ctx.requestRender()
+  }
+
+  protected createNativeSceneNode(): void {
+    try {
+      this.sceneNodeHandle = this._ctx.createSceneNode()
+    } catch (error) {
+      console.error(`Failed to create native scene node for ${this.id}:`, error)
+      this.sceneNodeHandle = null
+    }
+  }
+
+  protected destroyNativeSceneNode(): void {
+    if (this.sceneNodeHandle == null) return
+    try {
+      this._ctx.destroySceneNode(this.sceneNodeHandle)
+    } catch (error) {
+      console.error(`Failed to destroy native scene node for ${this.id}:`, error)
+    } finally {
+      this.sceneNodeHandle = null
+    }
+  }
+
+  protected syncNativeSceneStyle(): void {
+    if (this.sceneNodeHandle == null) return
+
+    const style = {
+      width: styleUnitValue(this._width),
+      height: styleUnitValue(this._height),
+      minWidth: 0,
+      minHeight: 0,
+      maxWidth: 0,
+      maxHeight: 0,
+      flexGrow: 0,
+      flexShrink: this._flexShrink,
+      flexBasis: 0,
+      left: styleUnitValue(this._position.left),
+      right: styleUnitValue(this._position.right),
+      top: styleUnitValue(this._position.top),
+      bottom: styleUnitValue(this._position.bottom),
+      marginTop: 0,
+      marginRight: 0,
+      marginBottom: 0,
+      marginLeft: 0,
+      paddingTop: 0,
+      paddingRight: 0,
+      paddingBottom: 0,
+      paddingLeft: 0,
+      widthUnit: styleUnitKind(this._width),
+      heightUnit: styleUnitKind(this._height),
+      minWidthUnit: 3,
+      minHeightUnit: 3,
+      maxWidthUnit: 3,
+      maxHeightUnit: 3,
+      flexBasisUnit: 3,
+      leftUnit: styleUnitKind(this._position.left),
+      rightUnit: styleUnitKind(this._position.right),
+      topUnit: styleUnitKind(this._position.top),
+      bottomUnit: styleUnitKind(this._position.bottom),
+      marginTopUnit: 3,
+      marginRightUnit: 3,
+      marginBottomUnit: 3,
+      marginLeftUnit: 3,
+      paddingTopUnit: 3,
+      paddingRightUnit: 3,
+      paddingBottomUnit: 3,
+      paddingLeftUnit: 3,
+      display: this._visible ? 0 : 1,
+      flexDirection: flexDirectionKind(this.primaryAxis, this.yogaNode.getFlexDirection()),
+      positionType: this._positionType === "absolute" ? 1 : 0,
+      overflow: overflowKind(this._overflow),
+    }
+
+    try {
+      this._ctx.sceneNodeSetStyle(this.sceneNodeHandle, style)
+    } catch (error) {
+      console.error(`Failed to sync native scene style for ${this.id}:`, error)
+    }
   }
 
   public get translateX(): number {
@@ -1144,6 +1251,9 @@ export abstract class Renderable extends BaseRenderable {
     const insertedIndex = this._childrenInLayoutOrder.length
     this._childrenInLayoutOrder.push(renderable)
     this.yogaNode.insertChild(childLayoutNode, insertedIndex)
+    if (this.sceneNodeHandle != null && renderable.sceneNodeHandle != null) {
+      this._ctx.sceneNodeAppendChild(this.sceneNodeHandle, renderable.sceneNodeHandle)
+    }
 
     this.childrenPrimarySortDirty = true
     this._shouldUpdateBefore.add(renderable)
@@ -1224,6 +1334,9 @@ export abstract class Renderable extends BaseRenderable {
 
     this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     this.yogaNode.insertChild(renderable.getLayoutNode(), insertedIndex)
+    if (this.sceneNodeHandle != null && renderable.sceneNodeHandle != null && anchor.sceneNodeHandle != null) {
+      this._ctx.sceneNodeInsertBefore(this.sceneNodeHandle, renderable.sceneNodeHandle, anchor.sceneNodeHandle)
+    }
 
     this._shouldUpdateBefore.add(renderable)
 
@@ -1251,6 +1364,9 @@ export abstract class Renderable extends BaseRenderable {
 
         const childLayoutNode = obj.getLayoutNode()
         this.yogaNode.removeChild(childLayoutNode)
+        if (this.sceneNodeHandle != null && obj.sceneNodeHandle != null) {
+          this._ctx.sceneNodeRemoveChild(this.sceneNodeHandle, obj.sceneNodeHandle)
+        }
         this.requestRender()
 
         obj.onRemove()
@@ -1436,6 +1552,7 @@ export abstract class Renderable extends BaseRenderable {
     this.removeAllListeners()
 
     this.destroySelf()
+    this.destroyNativeSceneNode()
 
     try {
       this.yogaNode.free()
@@ -1685,6 +1802,9 @@ export class RootRenderable extends Renderable {
   }
 
   public calculateLayout(): void {
+    if (this.sceneNodeHandle != null) {
+      this._ctx.sceneNodeCalculateLayout(this.sceneNodeHandle, this.width, this.height)
+    }
     this.yogaNode.calculateLayout(this.width, this.height, Direction.LTR)
     this.emit(LayoutEvents.LAYOUT_CHANGED)
   }

@@ -1042,6 +1042,42 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this._controlState
   }
 
+  public createSceneNode(): bigint | number {
+    return this.lib.createSceneNode()
+  }
+
+  public destroySceneNode(handle: bigint | number): boolean {
+    return this.lib.destroySceneNode(handle)
+  }
+
+  public sceneNodeAppendChild(parent: bigint | number, child: bigint | number): boolean {
+    return this.lib.sceneNodeAppendChild(parent, child)
+  }
+
+  public sceneNodeInsertBefore(parent: bigint | number, child: bigint | number, anchor: bigint | number): boolean {
+    return this.lib.sceneNodeInsertBefore(parent, child, anchor)
+  }
+
+  public sceneNodeRemoveChild(parent: bigint | number, child: bigint | number): boolean {
+    return this.lib.sceneNodeRemoveChild(parent, child)
+  }
+
+  public sceneNodeSetStyle(handle: bigint | number, style: Record<string, unknown>): boolean {
+    return this.lib.sceneNodeSetStyle(handle, style)
+  }
+
+  public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {
+    return this.lib.sceneNodeCalculateLayout(root, width, height)
+  }
+
+  public sceneNodeGetLayout(handle: bigint | number): { left: number; top: number; width: number; height: number } | null {
+    return this.lib.sceneNodeGetLayout(handle)
+  }
+
+  public sceneNodeGetChildCount(handle: bigint | number): number {
+    return this.lib.sceneNodeGetChildCount(handle)
+  }
+
   public get capabilities(): any | null {
     return this._capabilities
   }

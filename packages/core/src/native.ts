@@ -29,6 +29,8 @@ import {
   CursorStateStruct,
   CursorStyleOptionsStruct,
   GridDrawOptionsStruct,
+  SceneLayoutStruct,
+  SceneStyleStruct,
   NativeSpanFeedOptionsStruct,
   NativeSpanFeedStatsStruct,
   ReserveInfoStruct,
@@ -176,6 +178,42 @@ function getOpenTUILib(libPath?: string) {
     render: {
       args: ["ptr", "bool"],
       returns: "void",
+    },
+    createSceneNode: {
+      args: [],
+      returns: "u64",
+    },
+    destroySceneNode: {
+      args: ["u64"],
+      returns: "bool",
+    },
+    sceneNodeAppendChild: {
+      args: ["u64", "u64"],
+      returns: "bool",
+    },
+    sceneNodeInsertBefore: {
+      args: ["u64", "u64", "u64"],
+      returns: "bool",
+    },
+    sceneNodeRemoveChild: {
+      args: ["u64", "u64"],
+      returns: "bool",
+    },
+    sceneNodeSetStyle: {
+      args: ["u64", "ptr"],
+      returns: "bool",
+    },
+    sceneNodeCalculateLayout: {
+      args: ["u64", "f32", "f32"],
+      returns: "bool",
+    },
+    sceneNodeGetLayout: {
+      args: ["u64", "ptr"],
+      returns: "bool",
+    },
+    sceneNodeGetChildCount: {
+      args: ["u64"],
+      returns: "usize",
     },
     startNativeInputLoop: {
       args: ["ptr"],
@@ -797,6 +835,15 @@ export interface RenderLib {
   updateStats: (renderer: Pointer, time: number, fps: number, frameCallbackTime: number) => void
   updateMemoryStats: (renderer: Pointer, heapUsed: number, heapTotal: number, arrayBuffers: number) => void
   render: (renderer: Pointer, force: boolean) => void
+  createSceneNode: () => bigint | number
+  destroySceneNode: (handle: bigint | number) => boolean
+  sceneNodeAppendChild: (parent: bigint | number, child: bigint | number) => boolean
+  sceneNodeInsertBefore: (parent: bigint | number, child: bigint | number, anchor: bigint | number) => boolean
+  sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
+  sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
+  sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
+  sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
+  sceneNodeGetChildCount: (handle: bigint | number) => number
   startNativeInputLoop: (renderer: Pointer) => void
   stopNativeInputLoop: (renderer: Pointer) => void
   pumpNativeInputEvents: (renderer: Pointer) => void
@@ -1821,6 +1868,52 @@ class FFIRenderLib implements RenderLib {
 
   public render(renderer: Pointer, force: boolean) {
     this.opentui.symbols.render(renderer, force)
+  }
+
+  public createSceneNode(): bigint | number {
+    return this.opentui.symbols.createSceneNode()
+  }
+
+  public destroySceneNode(handle: bigint | number): boolean {
+    return this.opentui.symbols.destroySceneNode(handle)
+  }
+
+  public sceneNodeAppendChild(parent: bigint | number, child: bigint | number): boolean {
+    return this.opentui.symbols.sceneNodeAppendChild(parent, child)
+  }
+
+  public sceneNodeInsertBefore(parent: bigint | number, child: bigint | number, anchor: bigint | number): boolean {
+    return this.opentui.symbols.sceneNodeInsertBefore(parent, child, anchor)
+  }
+
+  public sceneNodeRemoveChild(parent: bigint | number, child: bigint | number): boolean {
+    return this.opentui.symbols.sceneNodeRemoveChild(parent, child)
+  }
+
+  public sceneNodeSetStyle(handle: bigint | number, style: Record<string, unknown>): boolean {
+    const styleBuffer = SceneStyleStruct.pack(style as any)
+    return this.opentui.symbols.sceneNodeSetStyle(handle, ptr(styleBuffer))
+  }
+
+  public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {
+    return this.opentui.symbols.sceneNodeCalculateLayout(root, width, height)
+  }
+
+  public sceneNodeGetLayout(handle: bigint | number): { left: number; top: number; width: number; height: number } | null {
+    const layoutBuffer = new ArrayBuffer(SceneLayoutStruct.size)
+    const ok = this.opentui.symbols.sceneNodeGetLayout(handle, ptr(layoutBuffer))
+    if (!ok) return null
+    const layout = SceneLayoutStruct.unpack(layoutBuffer)
+    return {
+      left: layout.left,
+      top: layout.top,
+      width: layout.width,
+      height: layout.height,
+    }
+  }
+
+  public sceneNodeGetChildCount(handle: bigint | number): number {
+    return toNumber(this.opentui.symbols.sceneNodeGetChildCount(handle))
   }
 
   public startNativeInputLoop(renderer: Pointer): void {
