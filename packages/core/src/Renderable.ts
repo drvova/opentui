@@ -355,6 +355,7 @@ export abstract class Renderable extends BaseRenderable {
   protected _opacity: number = 1.0
   private _flexShrink: number = 1
   protected usesYogaMeasureFunc: boolean = false
+  protected blocksNativeSceneLayout: boolean = false
 
   private renderableMapById: Map<string, Renderable> = new Map()
   protected _childrenInLayoutOrder: Renderable[] = []
@@ -1266,12 +1267,13 @@ export abstract class Renderable extends BaseRenderable {
     return this.yogaNode
   }
 
-  protected markUsesYogaMeasureFunc(): void {
+  protected markUsesYogaMeasureFunc(blocksNativeSceneLayout: boolean = true): void {
     this.usesYogaMeasureFunc = true
+    this.blocksNativeSceneLayout = blocksNativeSceneLayout
   }
 
   protected subtreeUsesYogaMeasureFunc(): boolean {
-    if (this.usesYogaMeasureFunc) {
+    if (this.blocksNativeSceneLayout) {
       return true
     }
 

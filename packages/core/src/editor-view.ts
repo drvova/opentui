@@ -264,10 +264,15 @@ export class EditorView {
 
   public measureForDimensions(width: number, height: number): { lineCount: number; widthColsMax: number } | null {
     this.guard()
+    return this.lib.textBufferViewMeasureForDimensions(this.textBufferViewPtr, width, height)
+  }
+
+  public get textBufferViewPtr(): Pointer {
+    this.guard()
     if (!this._textBufferViewPtr) {
       this._textBufferViewPtr = this.lib.editorViewGetTextBufferView(this.viewPtr)
     }
-    return this.lib.textBufferViewMeasureForDimensions(this._textBufferViewPtr, width, height)
+    return this._textBufferViewPtr
   }
 
   public destroy(): void {

@@ -72,6 +72,22 @@ export interface RenderContext extends EventEmitter {
   sceneNodeInsertBefore: (parent: bigint | number, child: bigint | number, anchor: bigint | number) => boolean
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
+  sceneNodeSetTextBufferViewMeasure: (
+    handle: bigint | number,
+    viewPtr: unknown,
+    clampAtMost: boolean,
+  ) => boolean
+  sceneNodeSetLineNumberMeasure: (
+    handle: bigint | number,
+    viewPtr: unknown,
+    logicalLineCount: number,
+    minWidth: number,
+    paddingRight: number,
+    lineNumberOffset: number,
+    maxCustomLineNumber: number,
+    maxBeforeWidth: number,
+    maxAfterWidth: number,
+  ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number

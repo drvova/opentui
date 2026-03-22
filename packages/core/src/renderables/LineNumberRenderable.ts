@@ -122,7 +122,54 @@ class GutterRenderable extends Renderable {
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
-    this.markUsesYogaMeasureFunc()
+    this.markUsesYogaMeasureFunc(false)
+    this.syncNativeMeasureRegistration()
+  }
+
+  private getNativeMeasureViewPtr(): unknown | null {
+    const target = this.target as any
+    if (target?.textBufferView?.ptr) {
+      return target.textBufferView.ptr
+    }
+    if (target?.editorView?.textBufferViewPtr) {
+      return target.editorView.textBufferViewPtr
+    }
+    return null
+  }
+
+  private getMaxCustomLineNumber(): number {
+    let maxLineNumber = 0
+    for (const value of this._lineNumbers.values()) {
+      if (value > maxLineNumber) {
+        maxLineNumber = value
+      }
+    }
+    return maxLineNumber
+  }
+
+  private syncNativeMeasureRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+
+    const viewPtr = this.getNativeMeasureViewPtr()
+    if (!viewPtr) return
+
+    this._ctx.sceneNodeSetLineNumberMeasure(
+      this.sceneNodeHandle,
+      viewPtr,
+      this.target.lineCount,
+      this._minWidth,
+      this._paddingRight,
+      this._lineNumberOffset,
+      this.getMaxCustomLineNumber(),
+      this._maxBeforeWidth,
+      this._maxAfterWidth,
+    )
+  }
+
+  public override requestRender(): void {
+    if (this.isDestroyed) return
+    this.syncNativeMeasureRegistration()
+    super.requestRender()
   }
 
   public remeasure(): void {

@@ -1066,6 +1066,34 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeSetStyle(handle, style)
   }
 
+  public sceneNodeSetTextBufferViewMeasure(handle: bigint | number, viewPtr: unknown, clampAtMost: boolean): boolean {
+    return this.lib.sceneNodeSetTextBufferViewMeasure(handle, viewPtr as any, clampAtMost)
+  }
+
+  public sceneNodeSetLineNumberMeasure(
+    handle: bigint | number,
+    viewPtr: unknown,
+    logicalLineCount: number,
+    minWidth: number,
+    paddingRight: number,
+    lineNumberOffset: number,
+    maxCustomLineNumber: number,
+    maxBeforeWidth: number,
+    maxAfterWidth: number,
+  ): boolean {
+    return this.lib.sceneNodeSetLineNumberMeasure(
+      handle,
+      viewPtr as any,
+      logicalLineCount,
+      minWidth,
+      paddingRight,
+      lineNumberOffset,
+      maxCustomLineNumber,
+      maxBeforeWidth,
+      maxAfterWidth,
+    )
+  }
+
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {
     return this.lib.sceneNodeCalculateLayout(root, width, height)
   }

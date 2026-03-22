@@ -430,7 +430,23 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
-    this.markUsesYogaMeasureFunc()
+    this.markUsesYogaMeasureFunc(false)
+  }
+
+  private syncNativeMeasureRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+
+    this._ctx.sceneNodeSetTextBufferViewMeasure(
+      this.sceneNodeHandle,
+      this.textBufferView.ptr,
+      this._positionType !== "absolute",
+    )
+  }
+
+  public override requestRender(): void {
+    if (this.isDestroyed) return
+    this.syncNativeMeasureRegistration()
+    super.requestRender()
   }
 
   shouldStartSelection(x: number, y: number): boolean {

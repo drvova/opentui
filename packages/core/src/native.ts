@@ -203,6 +203,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "ptr"],
       returns: "bool",
     },
+    sceneNodeSetTextBufferViewMeasure: {
+      args: ["u64", "ptr", "bool"],
+      returns: "bool",
+    },
+    sceneNodeSetLineNumberMeasure: {
+      args: ["u64", "ptr", "u32", "u32", "u32", "i32", "u32", "u32", "u32"],
+      returns: "bool",
+    },
     sceneNodeCalculateLayout: {
       args: ["u64", "f32", "f32"],
       returns: "bool",
@@ -841,6 +849,18 @@ export interface RenderLib {
   sceneNodeInsertBefore: (parent: bigint | number, child: bigint | number, anchor: bigint | number) => boolean
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
+  sceneNodeSetTextBufferViewMeasure: (handle: bigint | number, viewPtr: Pointer, clampAtMost: boolean) => boolean
+  sceneNodeSetLineNumberMeasure: (
+    handle: bigint | number,
+    viewPtr: Pointer,
+    logicalLineCount: number,
+    minWidth: number,
+    paddingRight: number,
+    lineNumberOffset: number,
+    maxCustomLineNumber: number,
+    maxBeforeWidth: number,
+    maxAfterWidth: number,
+  ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
@@ -1893,6 +1913,34 @@ class FFIRenderLib implements RenderLib {
   public sceneNodeSetStyle(handle: bigint | number, style: Record<string, unknown>): boolean {
     const styleBuffer = SceneStyleStruct.pack(style as any)
     return this.opentui.symbols.sceneNodeSetStyle(handle, ptr(styleBuffer))
+  }
+
+  public sceneNodeSetTextBufferViewMeasure(handle: bigint | number, viewPtr: Pointer, clampAtMost: boolean): boolean {
+    return this.opentui.symbols.sceneNodeSetTextBufferViewMeasure(handle, viewPtr, clampAtMost)
+  }
+
+  public sceneNodeSetLineNumberMeasure(
+    handle: bigint | number,
+    viewPtr: Pointer,
+    logicalLineCount: number,
+    minWidth: number,
+    paddingRight: number,
+    lineNumberOffset: number,
+    maxCustomLineNumber: number,
+    maxBeforeWidth: number,
+    maxAfterWidth: number,
+  ): boolean {
+    return this.opentui.symbols.sceneNodeSetLineNumberMeasure(
+      handle,
+      viewPtr,
+      logicalLineCount,
+      minWidth,
+      paddingRight,
+      lineNumberOffset,
+      maxCustomLineNumber,
+      maxBeforeWidth,
+      maxAfterWidth,
+    )
   }
 
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {

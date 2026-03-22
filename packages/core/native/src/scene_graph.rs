@@ -2,7 +2,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use yoga::{Align, Direction, Display, Edge, FlexDirection, Gutter, Justify, Layout, Node, Overflow, PositionType, StyleUnit, Wrap};
+use crate::NativeTextBufferView;
+use yoga::{
+    Align, Context, Direction, Display, Edge, FlexDirection, Gutter, Justify, Layout, MeasureMode,
+    Node, NodeRef, Overflow, PositionType, Size, StyleUnit, Wrap, get_node_ref_context,
+};
 
 static NEXT_SCENE_NODE_ID: AtomicU64 = AtomicU64::new(1);
 static SCENE_GRAPH: OnceLock<Mutex<SceneGraph>> = OnceLock::new();
@@ -173,9 +177,33 @@ struct SceneNode {
     yoga: Node,
     parent: Option<u64>,
     children: Vec<u64>,
+    measure: Option<SceneMeasure>,
 }
 
 unsafe impl Send for SceneNode {}
+
+#[derive(Clone, Copy, Debug)]
+enum SceneMeasure {
+    TextBufferView {
+        view: *mut NativeTextBufferView,
+        clamp_at_most: bool,
+    },
+    LineNumber {
+        view: *mut NativeTextBufferView,
+        logical_line_count: u32,
+        min_width: u32,
+        padding_right: u32,
+        line_number_offset: i32,
+        max_custom_line_number: u32,
+        max_before_width: u32,
+        max_after_width: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SceneNodeContext {
+    measure: Option<SceneMeasure>,
+}
 
 #[derive(Debug, Default)]
 struct SceneGraph {
@@ -191,8 +219,12 @@ impl SceneGraph {
                 yoga: Node::new(),
                 parent: None,
                 children: Vec::new(),
+                measure: None,
             }),
         );
+        if let Some(node) = self.nodes.get_mut(&id) {
+            sync_measure_binding(node);
+        }
         id
     }
 
@@ -272,6 +304,60 @@ impl SceneGraph {
         true
     }
 
+    fn set_text_buffer_view_measure(
+        &mut self,
+        id: u64,
+        view: *mut NativeTextBufferView,
+        clamp_at_most: bool,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if !node.children.is_empty() || view.is_null() {
+            return false;
+        }
+        node.measure = Some(SceneMeasure::TextBufferView {
+            view,
+            clamp_at_most,
+        });
+        sync_measure_binding(node);
+        node.yoga.mark_dirty();
+        true
+    }
+
+    fn set_line_number_measure(
+        &mut self,
+        id: u64,
+        view: *mut NativeTextBufferView,
+        logical_line_count: u32,
+        min_width: u32,
+        padding_right: u32,
+        line_number_offset: i32,
+        max_custom_line_number: u32,
+        max_before_width: u32,
+        max_after_width: u32,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if !node.children.is_empty() || view.is_null() {
+            return false;
+        }
+        node.measure = Some(SceneMeasure::LineNumber {
+            view,
+            logical_line_count,
+            min_width,
+            padding_right,
+            line_number_offset,
+            max_custom_line_number,
+            max_before_width,
+            max_after_width,
+        });
+        sync_measure_binding(node);
+        node.yoga.mark_dirty();
+        true
+    }
+
     fn calculate_layout(&mut self, root: u64, width: f32, height: f32) -> bool {
         let Some(node) = self.nodes.get_mut(&root) else {
             return false;
@@ -298,6 +384,14 @@ impl SceneGraph {
 
     fn insert_child(&mut self, parent: u64, child: u64, index: usize) -> bool {
         if parent == child {
+            return false;
+        }
+
+        if self
+            .nodes
+            .get(&parent)
+            .is_some_and(|node| node.measure.is_some())
+        {
             return false;
         }
 
@@ -341,6 +435,145 @@ impl SceneGraph {
 
 fn scene_graph() -> &'static Mutex<SceneGraph> {
     SCENE_GRAPH.get_or_init(|| Mutex::new(SceneGraph::default()))
+}
+
+fn sync_measure_binding(node: &mut SceneNode) {
+    node.yoga
+        .set_context(Some(Context::new(SceneNodeContext { measure: node.measure })));
+    let callback = if node.measure.is_some() {
+        Some(scene_graph_measure as yoga::MeasureFunc)
+    } else {
+        None
+    };
+    node.yoga.set_measure_func(callback);
+}
+
+extern "C" fn scene_graph_measure(
+    node_ref: NodeRef,
+    width: f32,
+    width_mode: MeasureMode,
+    height: f32,
+    _height_mode: MeasureMode,
+) -> Size {
+    let Some(context) = get_node_ref_context(&node_ref)
+        .and_then(|ctx| ctx.downcast_ref::<SceneNodeContext>())
+    else {
+        return Size {
+            width: 1.0,
+            height: 1.0,
+        };
+    };
+
+    let Some(measure) = context.measure else {
+        return Size {
+            width: 1.0,
+            height: 1.0,
+        };
+    };
+
+    match measure {
+        SceneMeasure::TextBufferView {
+            view,
+            clamp_at_most,
+        } => measure_text_buffer_view(view, width, width_mode, height, clamp_at_most),
+        SceneMeasure::LineNumber {
+            view,
+            logical_line_count,
+            min_width,
+            padding_right,
+            line_number_offset,
+            max_custom_line_number,
+            max_before_width,
+            max_after_width,
+        } => measure_line_number(
+            view,
+            logical_line_count,
+            min_width,
+            padding_right,
+            line_number_offset,
+            max_custom_line_number,
+            max_before_width,
+            max_after_width,
+        ),
+    }
+}
+
+fn measure_text_buffer_view(
+    view: *mut NativeTextBufferView,
+    width: f32,
+    width_mode: MeasureMode,
+    height: f32,
+    clamp_at_most: bool,
+) -> Size {
+    if view.is_null() {
+        return Size {
+            width: 1.0,
+            height: 1.0,
+        };
+    }
+
+    let effective_width = if width_mode == MeasureMode::Undefined || width.is_nan() {
+        0
+    } else {
+        width.floor().max(0.0) as u32
+    };
+    let effective_height = if height.is_nan() {
+        1
+    } else {
+        height.floor().max(1.0) as u32
+    };
+
+    let view = unsafe { &mut *view };
+    let measure = view.measure_for_dimensions(effective_width, effective_height);
+    let measured_width = measure.width_cols_max.max(1) as f32;
+    let measured_height = measure.line_count.max(1) as f32;
+
+    if clamp_at_most && width_mode == MeasureMode::AtMost {
+        return Size {
+            width: measured_width.min(effective_width as f32),
+            height: measured_height.min(effective_height as f32),
+        };
+    }
+
+    Size {
+        width: measured_width,
+        height: measured_height,
+    }
+}
+
+fn measure_line_number(
+    view: *mut NativeTextBufferView,
+    logical_line_count: u32,
+    min_width: u32,
+    padding_right: u32,
+    line_number_offset: i32,
+    max_custom_line_number: u32,
+    max_before_width: u32,
+    max_after_width: u32,
+) -> Size {
+    if view.is_null() {
+        return Size {
+            width: 1.0,
+            height: 1.0,
+        };
+    }
+
+    let view = unsafe { &mut *view };
+    let virtual_line_count = view.virtual_line_count().max(1);
+    let total_lines = logical_line_count.max(virtual_line_count);
+    let offset_total = i64::from(total_lines) + i64::from(line_number_offset);
+    let max_line_number = offset_total.max(i64::from(max_custom_line_number));
+    let digits = if max_line_number > 0 {
+        (max_line_number as f64).log10().floor() as u32 + 1
+    } else {
+        1
+    };
+    let base_width = min_width.max(digits + padding_right + 1);
+
+    Size {
+        width: (base_width + max_before_width + max_after_width) as f32,
+        height: virtual_line_count as f32,
+    }
 }
 
 fn apply_style(node: &mut Node, style: NativeSceneStyle) {
@@ -536,6 +769,43 @@ pub extern "C" fn sceneNodeSetStyle(id: u64, style_ptr: *const NativeSceneStyle)
     }
     let style = unsafe { std::ptr::read_unaligned(style_ptr) };
     scene_graph().lock().unwrap().set_style(id, style)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetTextBufferViewMeasure(
+    id: u64,
+    view: *mut NativeTextBufferView,
+    clamp_at_most: bool,
+) -> bool {
+    scene_graph()
+        .lock()
+        .unwrap()
+        .set_text_buffer_view_measure(id, view, clamp_at_most)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetLineNumberMeasure(
+    id: u64,
+    view: *mut NativeTextBufferView,
+    logical_line_count: u32,
+    min_width: u32,
+    padding_right: u32,
+    line_number_offset: i32,
+    max_custom_line_number: u32,
+    max_before_width: u32,
+    max_after_width: u32,
+) -> bool {
+    scene_graph().lock().unwrap().set_line_number_measure(
+        id,
+        view,
+        logical_line_count,
+        min_width,
+        padding_right,
+        line_number_offset,
+        max_custom_line_number,
+        max_before_width,
+        max_after_width,
+    )
 }
 
 #[unsafe(no_mangle)]
