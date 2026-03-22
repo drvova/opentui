@@ -1427,6 +1427,16 @@ export abstract class Renderable extends BaseRenderable {
     obj.parent = this
   }
 
+  private getDirectChildById(id: string): Renderable | undefined {
+    for (const child of this.getChildren()) {
+      if (child.id === id) {
+        return child
+      }
+    }
+
+    return undefined
+  }
+
   public add(obj: Renderable | VNode<any, any[]> | unknown, index?: number): number {
     if (!obj) {
       return -1
@@ -1454,9 +1464,7 @@ export abstract class Renderable extends BaseRenderable {
       }
     } else {
       this.replaceParent(renderable)
-      this.needsZIndexSort = true
       this.renderableMapById.set(renderable.id, renderable)
-      this._childrenInZIndexOrder.push(renderable)
 
       if (typeof renderable.onLifecyclePass === "function") {
         this._ctx.registerLifecyclePass(renderable)
@@ -1487,6 +1495,7 @@ export abstract class Renderable extends BaseRenderable {
       this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     }
 
+    this.needsZIndexSort = true
     this.childrenPrimarySortDirty = true
     this._shouldUpdateBefore.add(renderable)
 
@@ -1527,7 +1536,7 @@ export abstract class Renderable extends BaseRenderable {
       return -1
     }
 
-    if (!this.renderableMapById.has(anchor.id)) {
+    if (anchor.parent !== this && !this.getChildren().includes(anchor)) {
       if (process.env.NODE_ENV !== "production") {
         console.warn(`Anchor with id ${anchor.id} does not exist within the parent ${this.id}, skipping insertBefore`)
       }
@@ -1546,9 +1555,7 @@ export abstract class Renderable extends BaseRenderable {
       this._childrenInLayoutOrder.splice(this._childrenInLayoutOrder.indexOf(renderable), 1)
     } else {
       this.replaceParent(renderable)
-      this.needsZIndexSort = true
       this.renderableMapById.set(renderable.id, renderable)
-      this._childrenInZIndexOrder.push(renderable)
 
       if (typeof renderable.onLifecyclePass === "function") {
         this._ctx.registerLifecyclePass(renderable)
@@ -1574,6 +1581,7 @@ export abstract class Renderable extends BaseRenderable {
       this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     }
 
+    this.needsZIndexSort = true
     this._shouldUpdateBefore.add(renderable)
 
     this.requestRender()
@@ -1583,7 +1591,7 @@ export abstract class Renderable extends BaseRenderable {
 
   // TODO: that naming is meh
   public getRenderable(id: string): Renderable | undefined {
-    return this.renderableMapById.get(id)
+    return this.getDirectChildById(id)
   }
 
   public remove(id: string): void {
@@ -1591,39 +1599,33 @@ export abstract class Renderable extends BaseRenderable {
       return
     }
 
-    if (this.renderableMapById.has(id)) {
-      const obj = this.renderableMapById.get(id)
-      if (obj) {
-        if (obj._liveCount > 0) {
-          this.propagateLiveCount(-obj._liveCount)
-        }
-
-        const childLayoutNode = obj.getLayoutNode()
-        this.yogaNode.removeChild(childLayoutNode)
-        if (this.sceneNodeHandle != null && obj.sceneNodeHandle != null) {
-          this._ctx.sceneNodeRemoveChild(this.sceneNodeHandle, obj.sceneNodeHandle)
-        }
-        this.requestRender()
-
-        obj.onRemove()
-        obj.parent = null
-        this._ctx.unregisterLifecyclePass(obj)
-        this.renderableMapById.delete(id)
-
-        if (!this.syncLayoutOrderCacheFromNative()) {
-          const index = this._childrenInLayoutOrder.findIndex((obj) => obj.id === id)
-          if (index !== -1) {
-            this._childrenInLayoutOrder.splice(index, 1)
-          }
-        }
-
-        const zIndexIndex = this._childrenInZIndexOrder.findIndex((obj) => obj.id === id)
-        if (zIndexIndex !== -1) {
-          this._childrenInZIndexOrder.splice(zIndexIndex, 1)
-        }
-
-        this.childrenPrimarySortDirty = true
+    const obj = this.getDirectChildById(id)
+    if (obj) {
+      if (obj._liveCount > 0) {
+        this.propagateLiveCount(-obj._liveCount)
       }
+
+      const childLayoutNode = obj.getLayoutNode()
+      this.yogaNode.removeChild(childLayoutNode)
+      if (this.sceneNodeHandle != null && obj.sceneNodeHandle != null) {
+        this._ctx.sceneNodeRemoveChild(this.sceneNodeHandle, obj.sceneNodeHandle)
+      }
+      this.requestRender()
+
+      obj.onRemove()
+      obj.parent = null
+      this._ctx.unregisterLifecyclePass(obj)
+      this.renderableMapById.delete(id)
+
+      if (!this.syncLayoutOrderCacheFromNative()) {
+        const index = this._childrenInLayoutOrder.findIndex((obj) => obj.id === id)
+        if (index !== -1) {
+          this._childrenInLayoutOrder.splice(index, 1)
+        }
+      }
+
+      this.needsZIndexSort = true
+      this.childrenPrimarySortDirty = true
     }
   }
 
@@ -1783,6 +1785,7 @@ export abstract class Renderable extends BaseRenderable {
     }
 
     this._childrenInLayoutOrder = []
+    this._childrenInZIndexOrder = []
     this.renderableMapById.clear()
     Renderable.renderablesByNumber.delete(this.num)
 
