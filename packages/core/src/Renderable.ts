@@ -1811,6 +1811,13 @@ export abstract class Renderable extends BaseRenderable {
     // Override this method to provide custom rendering
   }
 
+  protected tryExecuteNativeSceneDraw(
+    _buffer: OptimizedBuffer,
+    _command: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    return false
+  }
+
   public get isDestroyed(): boolean {
     return this._isDestroyed
   }
@@ -2162,7 +2169,9 @@ export class RootRenderable extends Renderable {
             buffer.pushOpacity(command.opacity)
           }
 
-          renderable.render(buffer, deltaTime)
+          if (!renderable.tryExecuteNativeSceneDraw(buffer, command)) {
+            renderable.render(buffer, deltaTime)
+          }
         }
       }
     } finally {

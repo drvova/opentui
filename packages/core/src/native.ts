@@ -221,6 +221,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "ptr", "u32", "u32", "u32", "i32", "u32", "u32", "u32"],
       returns: "bool",
     },
+    sceneNodeSetBoxDraw: {
+      args: ["u64", "ptr", "u32", "ptr", "ptr", "ptr", "usize"],
+      returns: "bool",
+    },
+    sceneNodeDrawBox: {
+      args: ["u64", "ptr", "i32", "i32", "u32", "u32"],
+      returns: "bool",
+    },
     sceneNodeCalculateLayout: {
       args: ["u64", "f32", "f32"],
       returns: "bool",
@@ -896,6 +904,22 @@ export interface RenderLib {
     maxCustomLineNumber: number,
     maxBeforeWidth: number,
     maxAfterWidth: number,
+  ) => boolean
+  sceneNodeSetBoxDraw: (
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    packedOptions: number,
+    borderColor: RGBA,
+    backgroundColor: RGBA,
+    title: string | null,
+  ) => boolean
+  sceneNodeDrawBox: (
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
   ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
@@ -2028,6 +2052,37 @@ class FFIRenderLib implements RenderLib {
       maxBeforeWidth,
       maxAfterWidth,
     )
+  }
+
+  public sceneNodeSetBoxDraw(
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    packedOptions: number,
+    borderColor: RGBA,
+    backgroundColor: RGBA,
+    title: string | null,
+  ): boolean {
+    const titleBytes = title ? this.encoder.encode(title) : null
+    return this.opentui.symbols.sceneNodeSetBoxDraw(
+      handle,
+      borderChars,
+      packedOptions,
+      borderColor.buffer,
+      backgroundColor.buffer,
+      titleBytes,
+      titleBytes?.length ?? 0,
+    )
+  }
+
+  public sceneNodeDrawBox(
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): boolean {
+    return this.opentui.symbols.sceneNodeDrawBox(handle, buffer, x, y, width, height)
   }
 
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {

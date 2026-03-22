@@ -94,6 +94,22 @@ export interface RenderContext extends EventEmitter {
     maxBeforeWidth: number,
     maxAfterWidth: number,
   ) => boolean
+  sceneNodeSetBoxDraw: (
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    packedOptions: number,
+    borderColor: RGBA,
+    backgroundColor: RGBA,
+    title: string | null,
+  ) => boolean
+  sceneNodeDrawBox: (
+    handle: bigint | number,
+    buffer: unknown,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number

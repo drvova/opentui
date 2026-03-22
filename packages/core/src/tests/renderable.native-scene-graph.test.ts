@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 
+import { OptimizedBuffer } from "../buffer.js"
 import { BoxRenderable } from "../renderables/Box.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
@@ -200,5 +201,30 @@ test("native render plan carries effective ancestor opacity on render commands",
   expect(parentCommand?.opacity).toBeCloseTo(0.5)
   expect(childCommand?.opacity).toBeCloseTo(0.2)
 
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain BoxRenderable directly through the native path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const box = new BoxRenderable(renderer, {
+    width: 8,
+    height: 4,
+    border: true,
+    title: "Hi",
+    shouldFill: true,
+  })
+
+  renderer.root.add(box)
+  await renderOnce()
+
+  const buffer = OptimizedBuffer.create(12, 6, renderer.widthMethod)
+  expect(renderer.sceneNodeDrawBox((box as any).sceneNodeHandle, buffer.ptr, 0, 0, box.width, box.height)).toBe(true)
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("Hi")
+  expect(frame).toContain("┌")
+
+  buffer.destroy()
   renderer.destroy()
 })

@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use crate::NativeTextBufferView;
+use crate::{
+    NativeTextBufferView,
+    optimized_buffer::{BorderSides as BufferBorderSides, OptimizedBuffer},
+};
 use yoga::{
     Align, Context, Direction, Display, Edge, FlexDirection, Gutter, Justify, Layout, MeasureMode,
     Node, NodeRef, Overflow, PositionType, Size, StyleUnit, Wrap, get_node_ref_context,
@@ -240,6 +243,7 @@ struct SceneNode {
     parent: Option<u64>,
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
+    box_draw: Option<SceneBoxDraw>,
     visible_children: Option<Vec<u64>>,
     z_index: f32,
     opacity: f32,
@@ -291,6 +295,15 @@ struct TextTableMeasure {
     cell_views: Vec<usize>,
 }
 
+#[derive(Clone, Debug)]
+struct SceneBoxDraw {
+    border_chars: [u32; 11],
+    packed_options: u32,
+    border_color: [f32; 4],
+    background_color: [f32; 4],
+    title: Option<String>,
+}
+
 #[derive(Debug, Default)]
 struct SceneGraph {
     nodes: HashMap<u64, Box<SceneNode>>,
@@ -306,6 +319,7 @@ impl SceneGraph {
                 parent: None,
                 children: Vec::new(),
                 measure: None,
+                box_draw: None,
                 visible_children: None,
                 z_index: 0.0,
                 opacity: 1.0,
@@ -513,6 +527,75 @@ impl SceneGraph {
         });
         sync_measure_binding(node);
         node.yoga.mark_dirty();
+        true
+    }
+
+    fn set_box_draw(
+        &mut self,
+        id: u64,
+        border_chars: &[u32],
+        packed_options: u32,
+        border_color: [f32; 4],
+        background_color: [f32; 4],
+        title: Option<String>,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if border_chars.len() < 11 {
+            return false;
+        }
+
+        let mut chars = [0_u32; 11];
+        chars.copy_from_slice(&border_chars[..11]);
+        node.box_draw = Some(SceneBoxDraw {
+            border_chars: chars,
+            packed_options,
+            border_color,
+            background_color,
+            title,
+        });
+        true
+    }
+
+    fn draw_box(
+        &self,
+        id: u64,
+        buffer: &mut OptimizedBuffer,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let Some(draw) = &node.box_draw else {
+            return false;
+        };
+
+        let border_sides = BufferBorderSides {
+            top: (draw.packed_options & 0b1000) != 0,
+            right: (draw.packed_options & 0b0100) != 0,
+            bottom: (draw.packed_options & 0b0010) != 0,
+            left: (draw.packed_options & 0b0001) != 0,
+        };
+        let should_fill = ((draw.packed_options >> 4) & 1) != 0;
+        let title_alignment = ((draw.packed_options >> 5) & 0b11) as u8;
+
+        buffer.draw_box(
+            x,
+            y,
+            width,
+            height,
+            &draw.border_chars,
+            border_sides,
+            draw.border_color,
+            draw.background_color,
+            should_fill,
+            draw.title.as_deref(),
+            title_alignment,
+        );
         true
     }
 
@@ -1584,6 +1667,69 @@ pub extern "C" fn sceneNodeSetLineNumberMeasure(
         max_before_width,
         max_after_width,
     )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetBoxDraw(
+    id: u64,
+    border_chars_ptr: *const u32,
+    packed_options: u32,
+    border_color_ptr: *const f32,
+    background_color_ptr: *const f32,
+    title_ptr: *const u8,
+    title_len: usize,
+) -> bool {
+    if border_chars_ptr.is_null() || border_color_ptr.is_null() || background_color_ptr.is_null() {
+        return false;
+    }
+
+    let border_chars = unsafe { std::slice::from_raw_parts(border_chars_ptr, 11) };
+    let border_color = unsafe { std::slice::from_raw_parts(border_color_ptr, 4) };
+    let background_color = unsafe { std::slice::from_raw_parts(background_color_ptr, 4) };
+    let title = if title_ptr.is_null() || title_len == 0 {
+        None
+    } else {
+        Some(
+            String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(title_ptr, title_len) })
+                .into_owned(),
+        )
+    };
+
+    scene_graph().lock().unwrap().set_box_draw(
+        id,
+        border_chars,
+        packed_options,
+        [
+            border_color[0],
+            border_color[1],
+            border_color[2],
+            border_color[3],
+        ],
+        [
+            background_color[0],
+            background_color[1],
+            background_color[2],
+            background_color[3],
+        ],
+        title,
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeDrawBox(
+    id: u64,
+    buffer: *mut OptimizedBuffer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    scene_graph().lock().unwrap().draw_box(id, buffer, x, y, width, height)
 }
 
 #[unsafe(no_mangle)]

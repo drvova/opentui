@@ -6,6 +6,7 @@ import {
   type BorderSides,
   type BorderSidesConfig,
   type BorderStyle,
+  BorderCharArrays,
   borderCharsToArray,
   getBorderSides,
   parseBorderStyle,
@@ -13,6 +14,32 @@ import {
 import { type ColorInput, RGBA, parseColor } from "../lib/RGBA.js"
 import { isValidPercentage } from "../lib/renderable.validations.js"
 import type { RenderContext } from "../types.js"
+
+function packNativeBoxOptions(
+  border: boolean | BorderSides[],
+  shouldFill: boolean,
+  titleAlignment: "left" | "center" | "right",
+): number {
+  let packed = 0
+
+  if (border === true) {
+    packed |= 0b1111
+  } else if (Array.isArray(border)) {
+    if (border.includes("top")) packed |= 0b1000
+    if (border.includes("right")) packed |= 0b0100
+    if (border.includes("bottom")) packed |= 0b0010
+    if (border.includes("left")) packed |= 0b0001
+  }
+
+  if (shouldFill) {
+    packed |= 1 << 4
+  }
+
+  if (titleAlignment === "center") packed |= 1 << 5
+  else if (titleAlignment === "right") packed |= 2 << 5
+
+  return packed
+}
 
 export interface BoxOptions<TRenderable extends Renderable = BoxRenderable> extends RenderableOptions<TRenderable> {
   backgroundColor?: string | RGBA
@@ -49,7 +76,7 @@ export class BoxRenderable extends Renderable {
   private _customBorderCharsObj: BorderCharacters | undefined
   protected _customBorderChars?: Uint32Array
   protected borderSides: BorderSidesConfig
-  public shouldFill: boolean
+  private _shouldFill: boolean
   protected _title?: string
   protected _titleAlignment: "left" | "center" | "right"
 
@@ -84,7 +111,7 @@ export class BoxRenderable extends Renderable {
     this._customBorderCharsObj = options.customBorderChars
     this._customBorderChars = this._customBorderCharsObj ? borderCharsToArray(this._customBorderCharsObj) : undefined
     this.borderSides = getBorderSides(this._border)
-    this.shouldFill = options.shouldFill ?? this._defaultOptions.shouldFill
+    this._shouldFill = options.shouldFill ?? this._defaultOptions.shouldFill
     this._title = options.title
     this._titleAlignment = options.titleAlignment || this._defaultOptions.titleAlignment
 
@@ -96,6 +123,8 @@ export class BoxRenderable extends Renderable {
       this.applyYogaGap(options)
       this.requestRender()
     }
+
+    this.syncNativeBoxDraw()
   }
 
   private initializeBorder(): void {
@@ -117,6 +146,7 @@ export class BoxRenderable extends Renderable {
   public set customBorderChars(value: BorderCharacters | undefined) {
     this._customBorderCharsObj = value
     this._customBorderChars = value ? borderCharsToArray(value) : undefined
+    this.syncNativeBoxDraw()
     this.requestRender()
   }
 
@@ -128,6 +158,7 @@ export class BoxRenderable extends Renderable {
     const newColor = parseColor(value ?? this._defaultOptions.backgroundColor)
     if (this._backgroundColor !== newColor) {
       this._backgroundColor = newColor
+      this.syncNativeBoxDraw()
       this.requestRender()
     }
   }
@@ -141,6 +172,7 @@ export class BoxRenderable extends Renderable {
       this._border = value
       this.borderSides = getBorderSides(value)
       this.applyYogaBorders()
+      this.syncNativeBoxDraw()
       this.requestRender()
     }
   }
@@ -155,6 +187,7 @@ export class BoxRenderable extends Renderable {
       this._borderStyle = _value
       this._customBorderChars = undefined
       this.initializeBorder()
+      this.syncNativeBoxDraw()
       this.requestRender()
     }
   }
@@ -168,6 +201,7 @@ export class BoxRenderable extends Renderable {
     if (this._borderColor !== newColor) {
       this._borderColor = newColor
       this.initializeBorder()
+      this.syncNativeBoxDraw()
       this.requestRender()
     }
   }
@@ -181,6 +215,7 @@ export class BoxRenderable extends Renderable {
     if (this._focusedBorderColor !== newColor) {
       this._focusedBorderColor = newColor
       this.initializeBorder()
+      this.syncNativeBoxDraw()
       if (this._focused) {
         this.requestRender()
       }
@@ -194,6 +229,7 @@ export class BoxRenderable extends Renderable {
   public set title(value: string | undefined) {
     if (this._title !== value) {
       this._title = value
+      this.syncNativeBoxDraw()
       this.requestRender()
     }
   }
@@ -205,7 +241,36 @@ export class BoxRenderable extends Renderable {
   public set titleAlignment(value: "left" | "center" | "right") {
     if (this._titleAlignment !== value) {
       this._titleAlignment = value
+      this.syncNativeBoxDraw()
       this.requestRender()
+    }
+  }
+
+  public get shouldFill(): boolean {
+    return this._shouldFill
+  }
+
+  public set shouldFill(value: boolean) {
+    if (this._shouldFill !== value) {
+      this._shouldFill = value
+      this.syncNativeBoxDraw()
+      this.requestRender()
+    }
+  }
+
+  public override focus(): void {
+    const wasFocused = this._focused
+    super.focus()
+    if (!wasFocused && this._focused) {
+      this.syncNativeBoxDraw()
+    }
+  }
+
+  public override blur(): void {
+    const wasFocused = this._focused
+    super.blur()
+    if (wasFocused && !this._focused) {
+      this.syncNativeBoxDraw()
     }
   }
 
@@ -226,6 +291,27 @@ export class BoxRenderable extends Renderable {
       title: this._title,
       titleAlignment: this._titleAlignment,
     })
+  }
+
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    if (
+      this.sceneNodeHandle == null ||
+      this.buffered ||
+      this.renderBefore ||
+      this.renderAfter ||
+      this.renderSelf !== BoxRenderable.prototype.renderSelf
+    ) {
+      return false
+    }
+
+    const drawn = this._ctx.sceneNodeDrawBox(this.sceneNodeHandle, buffer.ptr, command.x, command.y, command.width, command.height)
+    if (drawn) {
+      this.markClean()
+    }
+    return drawn
   }
 
   protected getScissorRect(): { x: number; y: number; width: number; height: number } {
@@ -271,6 +357,25 @@ export class BoxRenderable extends Renderable {
     if (isGapType(options.columnGap)) {
       node.setGap(Gutter.Column, options.columnGap)
     }
+  }
+
+  private syncNativeBoxDraw(): void {
+    if (this.sceneNodeHandle == null) {
+      return
+    }
+
+    const style = parseBorderStyle(this._borderStyle, "single")
+    const borderChars = this._customBorderChars ?? BorderCharArrays[style]
+    const borderColor = this._focused ? this._focusedBorderColor : this._borderColor
+
+    this._ctx.sceneNodeSetBoxDraw(
+      this.sceneNodeHandle,
+      borderChars,
+      packNativeBoxOptions(this._border, this.shouldFill, this._titleAlignment),
+      borderColor,
+      this._backgroundColor,
+      this._title ?? null,
+    )
   }
 
   public set gap(gap: number | `${number}%` | undefined) {
