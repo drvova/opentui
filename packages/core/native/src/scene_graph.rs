@@ -596,6 +596,10 @@ impl SceneGraph {
         out.push(NativeSceneRenderCommand {
             kind: 0,
             renderable_num: node.renderable_num,
+            x,
+            y,
+            width,
+            height,
             ..NativeSceneRenderCommand::default()
         });
 

@@ -500,6 +500,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
   private _onDestroy?: () => void
   private _themeMode: ThemeMode | null = null
   private _terminalFocusState: boolean | null = null
+  private executingNativeRenderPlan: boolean = false
 
   private sequenceHandlers: ((sequence: string) => boolean)[] = []
   private prependedInputHandlers: ((sequence: string) => boolean)[] = []
@@ -874,6 +875,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     if (id !== this.capturedRenderable?.num) {
       this.lib.addToCurrentHitGridClipped(this.rendererPtr, x, y, width, height, id)
     }
+  }
+
+  public isExecutingNativeRenderPlan(): boolean {
+    return this.executingNativeRenderPlan
+  }
+
+  public setExecutingNativeRenderPlan(active: boolean): void {
+    this.executingNativeRenderPlan = active
   }
 
   public pushHitGridScissorRect(x: number, y: number, width: number, height: number): void {

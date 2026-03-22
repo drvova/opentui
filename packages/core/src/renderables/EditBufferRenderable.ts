@@ -655,7 +655,9 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     if (this.isDestroyed) return
 
     this.markClean()
-    this._ctx.addToHitGrid(this.x, this.y, this.width, this.height, this.num)
+    if (!this._ctx.isExecutingNativeRenderPlan()) {
+      this._ctx.addToHitGrid(this.x, this.y, this.width, this.height, this.num)
+    }
 
     this.renderSelf(buffer)
     this.renderCursor(buffer)
