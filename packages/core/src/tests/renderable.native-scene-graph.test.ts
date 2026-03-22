@@ -2,7 +2,10 @@ import { expect, test } from "bun:test"
 
 import { OptimizedBuffer } from "../buffer.js"
 import { BoxRenderable } from "../renderables/Box.js"
+import { CodeRenderable } from "../renderables/Code.js"
 import { TextRenderable } from "../renderables/Text.js"
+import { RGBA } from "../lib/RGBA.js"
+import { SyntaxStyle } from "../syntax-style.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
 function expectNativeLayoutParity(renderer: { sceneNodeGetLayout: (handle: bigint | number) => any }, renderable: BoxRenderable) {
@@ -249,5 +252,33 @@ test("scene graph can draw a plain TextRenderable directly through the native pa
   expect(frame).toContain("Hello")
 
   buffer.destroy()
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain CodeRenderable directly through the native text-view path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const syntaxStyle = SyntaxStyle.fromStyles({
+    default: { fg: RGBA.fromValues(1, 1, 1, 1) },
+  })
+  const code = new CodeRenderable(renderer, {
+    width: 12,
+    height: 2,
+    content: "const x = 1",
+    syntaxStyle,
+    conceal: false,
+  })
+
+  renderer.root.add(code)
+  await renderOnce()
+
+  const buffer = OptimizedBuffer.create(16, 4, renderer.widthMethod)
+  expect(renderer.sceneNodeDrawTextBufferView((code as any).sceneNodeHandle, buffer.ptr, 0, 0)).toBe(true)
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("const x = 1")
+
+  buffer.destroy()
+  syntaxStyle.destroy()
   renderer.destroy()
 })

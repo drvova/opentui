@@ -334,7 +334,7 @@ export class CodeRenderable extends TextBufferRenderable {
     return this.textBuffer.getLineHighlights(lineIdx)
   }
 
-  protected renderSelf(buffer: OptimizedBuffer): void {
+  private prepareRenderState(): void {
     if (this._highlightsDirty) {
       if (this.isDestroyed) return
 
@@ -350,8 +350,28 @@ export class CodeRenderable extends TextBufferRenderable {
         this._highlightingPromise = this.startHighlight()
       }
     }
+  }
 
+  protected renderSelf(buffer: OptimizedBuffer): void {
+    this.prepareRenderState()
     if (!this._shouldRenderTextBuffer) return
     super.renderSelf(buffer)
+  }
+
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number },
+  ): boolean {
+    this.prepareRenderState()
+
+    if (!this._shouldRenderTextBuffer) {
+      if (this.buffered || this.renderBefore || this.renderAfter) {
+        return false
+      }
+      this.markClean()
+      return true
+    }
+
+    return super.tryExecuteNativeSceneDraw(buffer, command)
   }
 }
