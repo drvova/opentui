@@ -153,6 +153,7 @@ name = "opentui-native"
 version = "0.1.90"
 dependencies = [
  "crossterm",
+ "rustix",
  "serde",
  "serde_json",
  "unicode-segmentation",

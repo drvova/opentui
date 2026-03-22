@@ -7,7 +7,9 @@ use crossterm::queue;
 use crossterm::style::{
     Attribute, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
 };
-use crossterm::terminal::{Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 
 use crate::terminal_state::CursorState;
 
@@ -21,6 +23,14 @@ impl Default for CrosstermBackend {
 }
 
 impl CrosstermBackend {
+    pub fn enable_raw_mode(&self) {
+        let _ = enable_raw_mode();
+    }
+
+    pub fn disable_raw_mode(&self) {
+        let _ = disable_raw_mode();
+    }
+
     pub fn append_setup(
         &self,
         out: &mut Vec<u8>,

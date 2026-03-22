@@ -367,43 +367,6 @@ export enum RendererControlState {
 
 type NativeInputEnvelope = { renderer: number }
 
-type NativeKeyInput = NativeInputEnvelope & {
-  name: string
-  ctrl: boolean
-  meta: boolean
-  shift: boolean
-  option: boolean
-  sequence: string
-  number: boolean
-  raw: string
-  eventType: "press" | "repeat" | "release"
-  source: "raw" | "kitty"
-  code?: string
-  super?: boolean
-  hyper?: boolean
-  capsLock?: boolean
-  numLock?: boolean
-  baseCode?: number
-  repeated?: boolean
-}
-
-type NativeMouseInput = NativeInputEnvelope & {
-  type: RawMouseEvent["type"]
-  button: number
-  x: number
-  y: number
-  modifiers: RawMouseEvent["modifiers"]
-  scroll?: ScrollInfo | null
-}
-
-type NativePasteInput = NativeInputEnvelope & {
-  text: string
-}
-
-type NativeFocusInput = NativeInputEnvelope & {
-  focused: boolean
-}
-
 export class CliRenderer extends EventEmitter implements RenderContext {
   private static animationFrameId = 0
   private lib: RenderLib
@@ -587,41 +550,24 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
   }).bind(this)
 
-  private readonly nativeKeyInputHandler = (data: ArrayBuffer) => {
-    const payload = this.decodeNativeEvent<NativeKeyInput>(data)
-    if (!payload || !this.isNativeInputForCurrentRenderer(payload.renderer)) return
-    if (payload.raw && this.dispatchSequenceHandlers(payload.raw)) {
-      return
-    }
-    this._keyHandler.processParsedKey(payload)
-  }
+  private readonly nativeRawInputHandler = (data: ArrayBuffer) => {
+    if (!this.stdinParser) return
+    const bytes = new Uint8Array(data)
+    if (bytes.byteLength < 8) return
 
-  private readonly nativeMouseInputHandler = (data: ArrayBuffer) => {
-    const payload = this.decodeNativeEvent<NativeMouseInput>(data)
-    if (!payload || !this.isNativeInputForCurrentRenderer(payload.renderer)) return
-    const mouseEvent: RawMouseEvent = {
-      type: payload.type,
-      button: payload.button,
-      x: payload.x,
-      y: payload.y,
-      modifiers: payload.modifiers,
-      scroll: payload.scroll ?? undefined,
-    }
-    if (this._useMouse) {
-      this.processSingleMouseEvent(mouseEvent)
-    }
-  }
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    const renderer = Number(view.getBigUint64(0, true))
+    if (!this.isNativeInputForCurrentRenderer(renderer)) return
 
-  private readonly nativePasteInputHandler = (data: ArrayBuffer) => {
-    const payload = this.decodeNativeEvent<NativePasteInput>(data)
-    if (!payload || !this.isNativeInputForCurrentRenderer(payload.renderer)) return
-    this._keyHandler.processPaste(new TextEncoder().encode(payload.text))
-  }
+    const payload = bytes.subarray(8)
+    if (payload.length === 0) return
 
-  private readonly nativeFocusInputHandler = (data: ArrayBuffer) => {
-    const payload = this.decodeNativeEvent<NativeFocusInput>(data)
-    if (!payload || !this.isNativeInputForCurrentRenderer(payload.renderer)) return
-    this.processNativeFocusChange(payload.focused)
+    try {
+      this.stdinParser.push(payload)
+      this.drainStdinParser()
+    } catch (error) {
+      this.handleStdinParserFailure(error)
+    }
   }
 
   private decodeNativeEvent<T extends NativeInputEnvelope>(data: ArrayBuffer): T | null {
@@ -642,7 +588,6 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       return
     }
 
-    this.stdin.removeListener("data", this.stdinListener)
     this.nativeInputActive = true
     this.lib.startNativeInputLoop(this.rendererPtr)
     this.nativeInputPumpTimer = this.clock.setInterval(() => {
@@ -723,10 +668,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     }
 
     this.rendererPtr = rendererPtr
-    this.lib.onNativeEvent("terminal:key", this.nativeKeyInputHandler)
-    this.lib.onNativeEvent("terminal:mouse", this.nativeMouseInputHandler)
-    this.lib.onNativeEvent("terminal:paste", this.nativePasteInputHandler)
-    this.lib.onNativeEvent("terminal:focus", this.nativeFocusInputHandler)
+    this.lib.onNativeEvent("terminal:raw", this.nativeRawInputHandler)
 
     const forwardEnvKeys = config.forwardEnvKeys ?? [...DEFAULT_FORWARDED_ENV_KEYS]
     for (const key of forwardEnvKeys) {
@@ -1280,13 +1222,13 @@ export class CliRenderer extends EventEmitter implements RenderContext {
         },
         true,
       )
-      this.activateNativeInputLoop()
     }, 5000)
 
     if (this._useMouse) {
       this.enableMouse()
     }
 
+    this.activateNativeInputLoop()
     this.queryPixelResolution()
   }
 
@@ -1998,37 +1940,18 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       explicitWidthCprActive: false,
     })
     this.stdinParser?.reset()
-    this.stdin.removeListener("data", this.stdinListener)
     this.deactivateNativeInputLoop()
     this.lib.suspendRenderer(this.rendererPtr)
-
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(false)
-    }
 
     this.stdin.pause()
   }
 
   public resume(): void {
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(true)
-    }
-
     this.stdin.resume()
     this.addExitListeners()
 
-    setImmediate(() => {
-      // Consume any existing stdin data to avoid processing stale input
-      while (this.stdin.read() !== null) {}
-      if (!this.nativeInputActive) {
-        this.stdin.on("data", this.stdinListener)
-      }
-    })
-
     this.lib.resumeRenderer(this.rendererPtr)
-    if (this.capabilityTimeoutId === null) {
-      this.activateNativeInputLoop()
-    }
+    this.activateNativeInputLoop()
 
     if (this._suspendedMouseEnabled) {
       this.enableMouse()
@@ -2164,20 +2087,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
       console.error("Error destroying root renderable:", e instanceof Error ? e.stack : String(e))
     }
 
-    // Remove listener before destroying parser
-    this.stdin.removeListener("data", this.stdinListener)
+    // Input bytes are fed by the native bridge; destroying the parser only
+    // tears down JS-side protocol decoding/state.
     this.deactivateNativeInputLoop()
-    if (this.stdin.setRawMode) {
-      this.stdin.setRawMode(false)
-    }
 
     this.stdinParser?.destroy()
     this.stdinParser = null
     this.oscSubscribers.clear()
-    this.lib.offNativeEvent("terminal:key", this.nativeKeyInputHandler)
-    this.lib.offNativeEvent("terminal:mouse", this.nativeMouseInputHandler)
-    this.lib.offNativeEvent("terminal:paste", this.nativePasteInputHandler)
-    this.lib.offNativeEvent("terminal:focus", this.nativeFocusInputHandler)
+    this.lib.offNativeEvent("terminal:raw", this.nativeRawInputHandler)
     this._console.destroy()
     this.disableStdoutInterception()
 

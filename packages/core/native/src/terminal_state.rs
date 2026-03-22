@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::io::{self, Write};
 
 use crate::crossterm_backend::CrosstermBackend;
@@ -155,6 +156,7 @@ pub struct TerminalState {
     suspended: bool,
     terminal_ready: bool,
     stdout_passthrough: bool,
+    raw_mode_active: bool,
 }
 
 impl Default for TerminalState {
@@ -174,6 +176,7 @@ impl Default for TerminalState {
             suspended: false,
             terminal_ready: false,
             stdout_passthrough: false,
+            raw_mode_active: false,
         }
     }
 }
@@ -295,6 +298,7 @@ impl TerminalState {
         self.alternate_screen = use_alternate_screen;
         self.suspended = false;
         self.terminal_ready = true;
+        self.enable_raw_mode_if_tty();
         self.emit_setup_sequence(true);
     }
 
@@ -302,11 +306,13 @@ impl TerminalState {
         if self.terminal_ready && !self.suspended {
             self.emit_teardown_sequence(false);
         }
+        self.disable_raw_mode_if_active();
         self.suspended = true;
     }
 
     pub fn resume(&mut self) {
         if self.terminal_ready && self.suspended {
+            self.enable_raw_mode_if_tty();
             self.emit_setup_sequence(false);
         }
         self.suspended = false;
@@ -337,6 +343,7 @@ impl TerminalState {
             return;
         }
         self.emit_teardown_sequence(true);
+        self.disable_raw_mode_if_active();
         self.terminal_ready = false;
         self.suspended = false;
     }
@@ -542,6 +549,22 @@ impl TerminalState {
             eprintln!("opentui native stdout flush failed: {error}");
             self.stdout_passthrough = false;
         }
+    }
+
+    fn enable_raw_mode_if_tty(&mut self) {
+        if self.raw_mode_active || !std::io::stdin().is_terminal() {
+            return;
+        }
+        self.backend.enable_raw_mode();
+        self.raw_mode_active = true;
+    }
+
+    fn disable_raw_mode_if_active(&mut self) {
+        if !self.raw_mode_active {
+            return;
+        }
+        self.backend.disable_raw_mode();
+        self.raw_mode_active = false;
     }
 }
 
