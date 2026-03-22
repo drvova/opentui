@@ -433,7 +433,7 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     this.markUsesYogaMeasureFunc(false)
   }
 
-  private syncNativeMeasureRegistration(): void {
+  protected syncNativeMeasureRegistration(): void {
     if (this.sceneNodeHandle == null) return
 
     this._ctx.sceneNodeSetTextBufferViewMeasure(
@@ -525,6 +525,28 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
       this.syncViewMetrics()
       buffer.drawTextBuffer(this.textBufferView, this.x, this.y)
     }
+  }
+
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number },
+  ): boolean {
+    if (
+      this.sceneNodeHandle == null ||
+      this.buffered ||
+      this.renderBefore ||
+      this.renderAfter ||
+      this.renderSelf !== TextBufferRenderable.prototype.renderSelf
+    ) {
+      return false
+    }
+
+    this.syncViewMetrics()
+    const drawn = this._ctx.sceneNodeDrawTextBufferView(this.sceneNodeHandle, buffer.ptr, command.x, command.y)
+    if (drawn) {
+      this.markClean()
+    }
+    return drawn
   }
 
   destroy(): void {

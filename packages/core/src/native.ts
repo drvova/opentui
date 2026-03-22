@@ -229,6 +229,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "ptr", "i32", "i32", "u32", "u32"],
       returns: "bool",
     },
+    sceneNodeDrawTextBufferView: {
+      args: ["u64", "ptr", "i32", "i32"],
+      returns: "bool",
+    },
     sceneNodeCalculateLayout: {
       args: ["u64", "f32", "f32"],
       returns: "bool",
@@ -921,6 +925,7 @@ export interface RenderLib {
     width: number,
     height: number,
   ) => boolean
+  sceneNodeDrawTextBufferView: (handle: bigint | number, buffer: Pointer, x: number, y: number) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
@@ -2083,6 +2088,10 @@ class FFIRenderLib implements RenderLib {
     height: number,
   ): boolean {
     return this.opentui.symbols.sceneNodeDrawBox(handle, buffer, x, y, width, height)
+  }
+
+  public sceneNodeDrawTextBufferView(handle: bigint | number, buffer: Pointer, x: number, y: number): boolean {
+    return this.opentui.symbols.sceneNodeDrawTextBufferView(handle, buffer, x, y)
   }
 
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {

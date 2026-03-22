@@ -599,6 +599,27 @@ impl SceneGraph {
         true
     }
 
+    fn draw_text_buffer_view(
+        &self,
+        id: u64,
+        buffer: &mut OptimizedBuffer,
+        x: i32,
+        y: i32,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let Some(SceneMeasure::TextBufferView { view, .. }) = node.measure.as_ref() else {
+            return false;
+        };
+        if view.is_null() {
+            return false;
+        }
+
+        crate::draw_text_buffer_view(buffer, unsafe { &**view }, x, y);
+        true
+    }
+
     fn calculate_layout(&mut self, root: u64, width: f32, height: f32) -> bool {
         let Some(node) = self.nodes.get_mut(&root) else {
             return false;
@@ -1730,6 +1751,24 @@ pub extern "C" fn sceneNodeDrawBox(
 
     let buffer = unsafe { &mut *buffer };
     scene_graph().lock().unwrap().draw_box(id, buffer, x, y, width, height)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeDrawTextBufferView(
+    id: u64,
+    buffer: *mut OptimizedBuffer,
+    x: i32,
+    y: i32,
+) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    scene_graph()
+        .lock()
+        .unwrap()
+        .draw_text_buffer_view(id, buffer, x, y)
 }
 
 #[unsafe(no_mangle)]

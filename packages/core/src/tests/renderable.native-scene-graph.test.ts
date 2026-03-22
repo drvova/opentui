@@ -2,6 +2,7 @@ import { expect, test } from "bun:test"
 
 import { OptimizedBuffer } from "../buffer.js"
 import { BoxRenderable } from "../renderables/Box.js"
+import { TextRenderable } from "../renderables/Text.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
 function expectNativeLayoutParity(renderer: { sceneNodeGetLayout: (handle: bigint | number) => any }, renderable: BoxRenderable) {
@@ -224,6 +225,28 @@ test("scene graph can draw a plain BoxRenderable directly through the native pat
   const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
   expect(frame).toContain("Hi")
   expect(frame).toContain("┌")
+
+  buffer.destroy()
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain TextRenderable directly through the native path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const text = new TextRenderable(renderer, {
+    width: 10,
+    height: 2,
+    content: "Hello",
+  })
+
+  renderer.root.add(text)
+  await renderOnce()
+
+  const buffer = OptimizedBuffer.create(12, 4, renderer.widthMethod)
+  expect(renderer.sceneNodeDrawTextBufferView((text as any).sceneNodeHandle, buffer.ptr, 0, 0)).toBe(true)
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("Hello")
 
   buffer.destroy()
   renderer.destroy()
