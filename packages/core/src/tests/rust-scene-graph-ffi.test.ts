@@ -65,6 +65,8 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
   const renderPlanBuffer = new ArrayBuffer(SceneRenderCommandStruct.size * 4)
   const renderPlanCount = Number(lib.sceneNodeBuildRenderPlan(root, ptr(renderPlanBuffer), 4))
   expect(renderPlanCount).toBeGreaterThan(0)
+  const renderPlan = SceneRenderCommandStruct.unpackList(renderPlanBuffer, renderPlanCount)
+  expect(renderPlan.every((command) => command.kind === 0)).toBe(true)
   expect(lib.sceneNodeCalculateLayout(root, 120, 40)).toBe(true)
 
   const layoutBuffer = new ArrayBuffer(SceneLayoutStruct.size)

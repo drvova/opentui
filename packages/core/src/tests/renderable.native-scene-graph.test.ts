@@ -162,6 +162,7 @@ test("native render plan carries ancestor clip state for hit-grid registration",
   const childCommand = commands.find((command) => command.renderableNum === child.num)
 
   expect(childCommand).toBeTruthy()
+  expect(commands.every((command) => command.kind === 0)).toBe(true)
   expect(childCommand).toMatchObject({
     hasClip: 1,
     clipX: container.x,
@@ -169,6 +170,35 @@ test("native render plan carries ancestor clip state for hit-grid registration",
     clipWidth: container.width,
     clipHeight: container.height,
   })
+
+  renderer.destroy()
+})
+
+test("native render plan carries effective ancestor opacity on render commands", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const parent = new BoxRenderable(renderer, {
+    width: 10,
+    height: 4,
+    opacity: 0.5,
+  })
+  const child = new BoxRenderable(renderer, {
+    width: 6,
+    height: 2,
+    opacity: 0.4,
+  })
+
+  renderer.root.add(parent)
+  parent.add(child)
+  await renderOnce()
+
+  const rootHandle = (renderer.root as any).sceneNodeHandle
+  const commands = renderer.sceneNodeBuildRenderPlan(rootHandle)
+  const parentCommand = commands.find((command) => command.renderableNum === parent.num)
+  const childCommand = commands.find((command) => command.renderableNum === child.num)
+
+  expect(parentCommand?.opacity).toBeCloseTo(0.5)
+  expect(childCommand?.opacity).toBeCloseTo(0.2)
 
   renderer.destroy()
 })

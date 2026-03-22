@@ -573,7 +573,7 @@ impl SceneGraph {
         };
 
         for child in self.child_handles_by_z_index(root).unwrap_or_else(|| root_node.children.clone()) {
-            self.build_render_plan_for_node(child, 0, 0, None, out);
+            self.build_render_plan_for_node(child, 0, 0, None, 1.0, out);
         }
         true
     }
@@ -584,6 +584,7 @@ impl SceneGraph {
         parent_x: i32,
         parent_y: i32,
         inherited_clip: Option<ClipRect>,
+        inherited_opacity: f32,
         out: &mut Vec<NativeSceneRenderCommand>,
     ) {
         let Some(node) = self.nodes.get(&id) else {
@@ -597,14 +598,7 @@ impl SceneGraph {
         let y = parent_y + node.yoga.get_layout_top() as i32 + node.translate_y as i32;
         let width = node.yoga.get_layout_width().max(0.0) as u32;
         let height = node.yoga.get_layout_height().max(0.0) as u32;
-
-        if node.opacity < 1.0 {
-            out.push(NativeSceneRenderCommand {
-                kind: 3,
-                opacity: node.opacity,
-                ..NativeSceneRenderCommand::default()
-            });
-        }
+        let effective_opacity = inherited_opacity * node.opacity.clamp(0.0, 1.0);
 
         out.push(NativeSceneRenderCommand {
             kind: 0,
@@ -618,6 +612,7 @@ impl SceneGraph {
             clip_y: inherited_clip.map(|clip| clip.y).unwrap_or_default(),
             clip_width: inherited_clip.map(|clip| clip.width).unwrap_or_default(),
             clip_height: inherited_clip.map(|clip| clip.height).unwrap_or_default(),
+            opacity: effective_opacity,
             ..NativeSceneRenderCommand::default()
         });
 
@@ -644,8 +639,6 @@ impl SceneGraph {
                 0
             };
 
-            let scissor_x = if node.buffered { left_inset } else { x + left_inset };
-            let scissor_y = if node.buffered { top_inset } else { y + top_inset };
             let scissor_width =
                 width.saturating_sub((left_inset as u32).saturating_add(right_inset as u32));
             let scissor_height =
@@ -658,17 +651,6 @@ impl SceneGraph {
             };
 
             child_clip = merge_clip_rects(inherited_clip, Some(screen_scissor));
-
-            out.push(NativeSceneRenderCommand {
-                kind: 1,
-                x: scissor_x,
-                y: scissor_y,
-                width: scissor_width,
-                height: scissor_height,
-                screen_x: x,
-                screen_y: y,
-                ..NativeSceneRenderCommand::default()
-            });
         }
 
         let ordered_children = if let Some(visible_children) = &node.visible_children {
@@ -684,21 +666,7 @@ impl SceneGraph {
         };
 
         for child in ordered_children {
-            self.build_render_plan_for_node(child, x, y, child_clip, out);
-        }
-
-        if node.overflow != 0 && width > 0 && height > 0 {
-            out.push(NativeSceneRenderCommand {
-                kind: 2,
-                ..NativeSceneRenderCommand::default()
-            });
-        }
-
-        if node.opacity < 1.0 {
-            out.push(NativeSceneRenderCommand {
-                kind: 4,
-                ..NativeSceneRenderCommand::default()
-            });
+            self.build_render_plan_for_node(child, x, y, child_clip, effective_opacity, out);
         }
     }
 

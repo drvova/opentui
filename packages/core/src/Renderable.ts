@@ -2012,10 +2012,6 @@ export type RenderCommand =
 
 enum NativeRenderCommandKind {
   Render = 0,
-  PushScissorRect = 1,
-  PopScissorRect = 2,
-  PushOpacity = 3,
-  PopOpacity = 4,
 }
 
 export class RootRenderable extends Renderable {
@@ -2133,45 +2129,45 @@ export class RootRenderable extends Renderable {
 
     this._ctx.setExecutingNativeRenderPlan(true)
     try {
+      buffer.clearScissorRects()
+      buffer.clearOpacity()
       for (const command of commands) {
-        switch (command.kind) {
-          case NativeRenderCommandKind.Render: {
-            const renderable = Renderable.renderablesByNumber.get(command.renderableNum)
-            if (renderable && !renderable.isDestroyed) {
-              if (command.hasClip) {
-                this._ctx.addToHitGridWithinClip(
-                  command.x,
-                  command.y,
-                  command.width,
-                  command.height,
-                  command.clipX,
-                  command.clipY,
-                  command.clipWidth,
-                  command.clipHeight,
-                  command.renderableNum,
-                )
-              } else {
-                this._ctx.addToHitGrid(command.x, command.y, command.width, command.height, command.renderableNum)
-              }
-              renderable.render(buffer, deltaTime)
-            }
-            break
+        if (command.kind !== NativeRenderCommandKind.Render) {
+          continue
+        }
+
+        const renderable = Renderable.renderablesByNumber.get(command.renderableNum)
+        if (renderable && !renderable.isDestroyed) {
+          if (command.hasClip) {
+            this._ctx.addToHitGridWithinClip(
+              command.x,
+              command.y,
+              command.width,
+              command.height,
+              command.clipX,
+              command.clipY,
+              command.clipWidth,
+              command.clipHeight,
+              command.renderableNum,
+            )
+            buffer.clearScissorRects()
+            buffer.pushScissorRect(command.clipX, command.clipY, command.clipWidth, command.clipHeight)
+          } else {
+            this._ctx.addToHitGrid(command.x, command.y, command.width, command.height, command.renderableNum)
+            buffer.clearScissorRects()
           }
-          case NativeRenderCommandKind.PushScissorRect:
-            buffer.pushScissorRect(command.x, command.y, command.width, command.height)
-            break
-          case NativeRenderCommandKind.PopScissorRect:
-            buffer.popScissorRect()
-            break
-          case NativeRenderCommandKind.PushOpacity:
+
+          buffer.clearOpacity()
+          if (command.opacity < 1) {
             buffer.pushOpacity(command.opacity)
-            break
-          case NativeRenderCommandKind.PopOpacity:
-            buffer.popOpacity()
-            break
+          }
+
+          renderable.render(buffer, deltaTime)
         }
       }
     } finally {
+      buffer.clearScissorRects()
+      buffer.clearOpacity()
       this._ctx.setExecutingNativeRenderPlan(false)
     }
   }
