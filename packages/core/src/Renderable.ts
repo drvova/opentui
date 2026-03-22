@@ -1296,6 +1296,16 @@ export abstract class Renderable extends BaseRenderable {
     return children
   }
 
+  private syncLayoutOrderCacheFromNative(): boolean {
+    const nativeChildren = this.getNativeOrderedChildren()
+    if (nativeChildren === null) {
+      return false
+    }
+
+    this._childrenInLayoutOrder = nativeChildren
+    return true
+  }
+
   protected markUsesYogaMeasureFunc(blocksNativeSceneLayout: boolean = true): void {
     this.usesYogaMeasureFunc = true
     this.blocksNativeSceneLayout = blocksNativeSceneLayout
@@ -1463,14 +1473,18 @@ export abstract class Renderable extends BaseRenderable {
         ? this._childrenInLayoutOrder.length
         : Math.max(0, Math.min(requestedIndex, this._childrenInLayoutOrder.length))
     const anchorRenderable = this._childrenInLayoutOrder[insertedIndex]
-    this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     this.yogaNode.insertChild(childLayoutNode, insertedIndex)
+    let syncedLayoutOrder = false
     if (this.sceneNodeHandle != null && renderable.sceneNodeHandle != null) {
       if (anchorRenderable?.sceneNodeHandle != null) {
         this._ctx.sceneNodeInsertBefore(this.sceneNodeHandle, renderable.sceneNodeHandle, anchorRenderable.sceneNodeHandle)
       } else {
         this._ctx.sceneNodeAppendChild(this.sceneNodeHandle, renderable.sceneNodeHandle)
       }
+      syncedLayoutOrder = this.syncLayoutOrderCacheFromNative()
+    }
+    if (!syncedLayoutOrder) {
+      this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     }
 
     this.childrenPrimarySortDirty = true
@@ -1550,10 +1564,14 @@ export abstract class Renderable extends BaseRenderable {
     const anchorIndex = this._childrenInLayoutOrder.indexOf(anchor)
     const insertedIndex = Math.max(0, Math.min(anchorIndex, this._childrenInLayoutOrder.length))
 
-    this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     this.yogaNode.insertChild(renderable.getLayoutNode(), insertedIndex)
+    let syncedLayoutOrder = false
     if (this.sceneNodeHandle != null && renderable.sceneNodeHandle != null && anchor.sceneNodeHandle != null) {
       this._ctx.sceneNodeInsertBefore(this.sceneNodeHandle, renderable.sceneNodeHandle, anchor.sceneNodeHandle)
+      syncedLayoutOrder = this.syncLayoutOrderCacheFromNative()
+    }
+    if (!syncedLayoutOrder) {
+      this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     }
 
     this._shouldUpdateBefore.add(renderable)
@@ -1592,9 +1610,11 @@ export abstract class Renderable extends BaseRenderable {
         this._ctx.unregisterLifecyclePass(obj)
         this.renderableMapById.delete(id)
 
-        const index = this._childrenInLayoutOrder.findIndex((obj) => obj.id === id)
-        if (index !== -1) {
-          this._childrenInLayoutOrder.splice(index, 1)
+        if (!this.syncLayoutOrderCacheFromNative()) {
+          const index = this._childrenInLayoutOrder.findIndex((obj) => obj.id === id)
+          if (index !== -1) {
+            this._childrenInLayoutOrder.splice(index, 1)
+          }
         }
 
         const zIndexIndex = this._childrenInZIndexOrder.findIndex((obj) => obj.id === id)
