@@ -201,6 +201,10 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "u64"],
       returns: "bool",
     },
+    sceneNodeSetVisibleChildren: {
+      args: ["u64", "ptr", "usize"],
+      returns: "bool",
+    },
     sceneNodeSetStyle: {
       args: ["u64", "ptr"],
       returns: "bool",
@@ -226,6 +230,10 @@ function getOpenTUILib(libPath?: string) {
       returns: "bool",
     },
     sceneNodeGetChildCount: {
+      args: ["u64"],
+      returns: "usize",
+    },
+    sceneNodeGetSubtreeNodeCount: {
       args: ["u64"],
       returns: "usize",
     },
@@ -866,6 +874,7 @@ export interface RenderLib {
   sceneNodeAppendChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeInsertBefore: (parent: bigint | number, child: bigint | number, anchor: bigint | number) => boolean
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
+  sceneNodeSetVisibleChildren: (handle: bigint | number, children: readonly (bigint | number)[]) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
   sceneNodeSetTextBufferViewMeasure: (handle: bigint | number, viewPtr: Pointer, clampAtMost: boolean) => boolean
   sceneNodeSetTextTableMeasure: (
@@ -887,6 +896,7 @@ export interface RenderLib {
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
+  sceneNodeGetSubtreeNodeCount: (handle: bigint | number) => number
   sceneNodeGetChildren: (handle: bigint | number) => Array<bigint | number>
   sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
   sceneNodeBuildRenderPlan: (handle: bigint | number) => Array<{
@@ -1946,6 +1956,18 @@ class FFIRenderLib implements RenderLib {
     return this.opentui.symbols.sceneNodeRemoveChild(parent, child)
   }
 
+  public sceneNodeSetVisibleChildren(handle: bigint | number, children: readonly (bigint | number)[]): boolean {
+    if (children.length === 0) {
+      return this.opentui.symbols.sceneNodeSetVisibleChildren(handle, null, 0)
+    }
+
+    const buffer = new BigUint64Array(children.length)
+    for (let i = 0; i < children.length; i++) {
+      buffer[i] = BigInt(children[i])
+    }
+    return this.opentui.symbols.sceneNodeSetVisibleChildren(handle, ptr(buffer.buffer), children.length)
+  }
+
   public sceneNodeSetStyle(handle: bigint | number, style: Record<string, unknown>): boolean {
     const styleBuffer = SceneStyleStruct.pack(style as any)
     return this.opentui.symbols.sceneNodeSetStyle(handle, ptr(styleBuffer))
@@ -2013,6 +2035,10 @@ class FFIRenderLib implements RenderLib {
     return toNumber(this.opentui.symbols.sceneNodeGetChildCount(handle))
   }
 
+  public sceneNodeGetSubtreeNodeCount(handle: bigint | number): number {
+    return toNumber(this.opentui.symbols.sceneNodeGetSubtreeNodeCount(handle))
+  }
+
   public sceneNodeGetChildren(handle: bigint | number): Array<bigint | number> {
     const count = this.sceneNodeGetChildCount(handle)
     if (count <= 0) {
@@ -2048,8 +2074,8 @@ class FFIRenderLib implements RenderLib {
     screenY: number
     opacity: number
   }> {
-    const childCount = this.sceneNodeGetChildCount(handle)
-    const maxCommands = Math.max(1, childCount * 8 + 8)
+    const subtreeCount = this.sceneNodeGetSubtreeNodeCount(handle)
+    const maxCommands = Math.max(1, subtreeCount * 5 + 8)
     const buffer = new ArrayBuffer(maxCommands * SceneRenderCommandStruct.size)
     const count = toNumber(this.opentui.symbols.sceneNodeBuildRenderPlan(handle, ptr(buffer), maxCommands))
     return SceneRenderCommandStruct.unpackList(buffer, count) as any

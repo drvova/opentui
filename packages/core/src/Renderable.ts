@@ -1306,6 +1306,10 @@ export abstract class Renderable extends BaseRenderable {
     return children
   }
 
+  protected getTraversalChildren(): Renderable[] {
+    return this.getNativeOrderedChildren() ?? [...this._childrenInLayoutOrder]
+  }
+
   private syncLayoutOrderCacheFromNative(): boolean {
     const nativeChildren = this.getNativeOrderedChildren()
     if (nativeChildren === null) {
@@ -1739,7 +1743,7 @@ export abstract class Renderable extends BaseRenderable {
 
     if (this._isDestroyed) return
 
-    for (const child of this.getChildren()) {
+    for (const child of this.getTraversalChildren()) {
       child.syncLayoutState(deltaTime)
     }
   }
@@ -1777,7 +1781,7 @@ export abstract class Renderable extends BaseRenderable {
       return true
     }
 
-    for (const child of this.getChildren()) {
+    for (const child of this.getTraversalChildren()) {
       if (child.subtreeUsesCustomVisibleChildFiltering()) {
         return true
       }

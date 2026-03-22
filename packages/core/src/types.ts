@@ -71,6 +71,7 @@ export interface RenderContext extends EventEmitter {
   sceneNodeAppendChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeInsertBefore: (parent: bigint | number, child: bigint | number, anchor: bigint | number) => boolean
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
+  sceneNodeSetVisibleChildren: (handle: bigint | number, children: readonly (bigint | number)[]) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
   sceneNodeSetTextBufferViewMeasure: (
     handle: bigint | number,
@@ -96,6 +97,7 @@ export interface RenderContext extends EventEmitter {
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
+  sceneNodeGetSubtreeNodeCount: (handle: bigint | number) => number
   sceneNodeGetChildren: (handle: bigint | number) => Array<bigint | number>
   sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
   sceneNodeBuildRenderPlan: (handle: bigint | number) => Array<{

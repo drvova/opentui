@@ -39,6 +39,29 @@ class ContentRenderable extends BoxRenderable {
     }
     return this.getChildrenSortedByPrimaryAxis().map((child) => child.num)
   }
+
+  protected override syncLayoutState(deltaTime: number): void {
+    super.syncLayoutState(deltaTime)
+
+    if (this.sceneNodeHandle == null) {
+      return
+    }
+
+    if (!this._viewportCulling) {
+      this._ctx.sceneNodeSetVisibleChildren(this.sceneNodeHandle, [])
+      return
+    }
+
+    const visibleHandles = getObjectsInViewport(this.viewport, this.getChildrenSortedByPrimaryAxis(), this.primaryAxis, 0)
+      .map((child) => (child as any).sceneNodeHandle)
+      .filter((handle): handle is bigint | number => handle != null)
+
+    this._ctx.sceneNodeSetVisibleChildren(this.sceneNodeHandle, visibleHandles)
+  }
+
+  protected override subtreeUsesCustomVisibleChildFiltering(): boolean {
+    return false
+  }
 }
 
 export interface ScrollBoxOptions extends BoxOptions<ScrollBoxRenderable> {
@@ -95,6 +118,7 @@ function stripScrollBoxPadding<T extends object>(options: T): Omit<T, ScrollBoxP
 export class ScrollBoxRenderable extends BoxRenderable {
   static idCounter = 0
   private internalId = 0
+  private isDestroyingInternalChildren: boolean = false
   public readonly wrapper: BoxRenderable
   public readonly viewport: BoxRenderable
   public readonly content: ContentRenderable
@@ -516,6 +540,10 @@ export class ScrollBoxRenderable extends BoxRenderable {
   }
 
   public remove(id: string): void {
+    if (this.isDestroyingInternalChildren && (id === this.wrapper.id || id === this.verticalScrollBar.id)) {
+      super.remove(id)
+      return
+    }
     this.content.remove(id)
   }
 
@@ -879,5 +907,16 @@ export class ScrollBoxRenderable extends BoxRenderable {
       this.selectionListener = undefined
     }
     super.destroySelf()
+  }
+
+  public override destroyRecursively(): void {
+    this.isDestroyingInternalChildren = true
+    try {
+      this.verticalScrollBar.destroyRecursively()
+      this.wrapper.destroyRecursively()
+      this.destroy()
+    } finally {
+      this.isDestroyingInternalChildren = false
+    }
   }
 }

@@ -228,6 +228,7 @@ struct SceneNode {
     parent: Option<u64>,
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
+    visible_children: Option<Vec<u64>>,
     z_index: f32,
     opacity: f32,
     translate_x: f32,
@@ -293,6 +294,7 @@ impl SceneGraph {
                 parent: None,
                 children: Vec::new(),
                 measure: None,
+                visible_children: None,
                 z_index: 0.0,
                 opacity: 1.0,
                 translate_x: 0.0,
@@ -397,6 +399,18 @@ impl SceneGraph {
         node.renderable_num = style.renderable_num;
         node.display = style.display;
         node.overflow = style.overflow;
+        true
+    }
+
+    fn set_visible_children(&mut self, id: u64, visible_children: Vec<u64>) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if visible_children.is_empty() {
+            node.visible_children = None;
+            return true;
+        }
+        node.visible_children = Some(visible_children);
         true
     }
 
@@ -529,6 +543,18 @@ impl SceneGraph {
         Some(ordered)
     }
 
+    fn subtree_node_count(&self, id: u64) -> usize {
+        let Some(node) = self.nodes.get(&id) else {
+            return 0;
+        };
+
+        1 + node
+            .children
+            .iter()
+            .map(|child| self.subtree_node_count(*child))
+            .sum::<usize>()
+    }
+
     fn build_render_plan(&self, root: u64, out: &mut Vec<NativeSceneRenderCommand>) -> bool {
         let Some(root_node) = self.nodes.get(&root) else {
             return false;
@@ -614,7 +640,19 @@ impl SceneGraph {
             });
         }
 
-        for child in self.child_handles_by_z_index(id).unwrap_or_else(|| node.children.clone()) {
+        let ordered_children = if let Some(visible_children) = &node.visible_children {
+            let mut ordered = visible_children.clone();
+            ordered.sort_by(|a, b| {
+                let az = self.nodes.get(a).map(|node| node.z_index).unwrap_or(0.0);
+                let bz = self.nodes.get(b).map(|node| node.z_index).unwrap_or(0.0);
+                az.partial_cmp(&bz).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            ordered
+        } else {
+            self.child_handles_by_z_index(id).unwrap_or_else(|| node.children.clone())
+        };
+
+        for child in ordered_children {
             self.build_render_plan_for_node(child, x, y, out);
         }
 
@@ -1462,6 +1500,23 @@ pub extern "C" fn sceneNodeRemoveChild(parent: u64, child: u64) -> bool {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetVisibleChildren(
+    id: u64,
+    children_ptr: *const u64,
+    child_count: usize,
+) -> bool {
+    let children = if child_count == 0 || children_ptr.is_null() {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(children_ptr, child_count) }.to_vec()
+    };
+    scene_graph()
+        .lock()
+        .unwrap()
+        .set_visible_children(id, children)
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn sceneNodeSetStyle(id: u64, style_ptr: *const NativeSceneStyle) -> bool {
     if style_ptr.is_null() {
         return false;
@@ -1558,6 +1613,11 @@ pub extern "C" fn sceneNodeGetLayout(id: u64, out_ptr: *mut NativeSceneLayout) -
 #[unsafe(no_mangle)]
 pub extern "C" fn sceneNodeGetChildCount(id: u64) -> usize {
     scene_graph().lock().unwrap().child_count(id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeGetSubtreeNodeCount(id: u64) -> usize {
+    scene_graph().lock().unwrap().subtree_node_count(id)
 }
 
 #[unsafe(no_mangle)]

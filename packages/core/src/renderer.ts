@@ -1062,6 +1062,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeRemoveChild(parent, child)
   }
 
+  public sceneNodeSetVisibleChildren(handle: bigint | number, children: readonly (bigint | number)[]): boolean {
+    return this.lib.sceneNodeSetVisibleChildren(handle, children)
+  }
+
   public sceneNodeSetStyle(handle: bigint | number, style: Record<string, unknown>): boolean {
     return this.lib.sceneNodeSetStyle(handle, style)
   }
@@ -1112,6 +1116,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
 
   public sceneNodeGetChildCount(handle: bigint | number): number {
     return this.lib.sceneNodeGetChildCount(handle)
+  }
+
+  public sceneNodeGetSubtreeNodeCount(handle: bigint | number): number {
+    return this.lib.sceneNodeGetSubtreeNodeCount(handle)
   }
 
   public sceneNodeGetChildren(handle: bigint | number): Array<bigint | number> {
