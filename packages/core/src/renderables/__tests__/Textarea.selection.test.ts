@@ -1259,7 +1259,7 @@ describe("Textarea - Selection Tests", () => {
 
       editor.left = 20
       editor.top = 10
-      root.yogaNode.calculateLayout(80, 24)
+      root.calculateLayout()
       await renderOnce()
 
       const newX = editor.x

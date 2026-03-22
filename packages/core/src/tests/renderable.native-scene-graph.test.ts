@@ -4,6 +4,7 @@ import { OptimizedBuffer } from "../buffer.js"
 import { BoxRenderable } from "../renderables/Box.js"
 import { CodeRenderable } from "../renderables/Code.js"
 import { TextRenderable } from "../renderables/Text.js"
+import { TextareaRenderable } from "../renderables/Textarea.js"
 import { RGBA } from "../lib/RGBA.js"
 import { SyntaxStyle } from "../syntax-style.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
@@ -280,5 +281,27 @@ test("scene graph can draw a plain CodeRenderable directly through the native te
 
   buffer.destroy()
   syntaxStyle.destroy()
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain TextareaRenderable directly through the native editor-view path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const textarea = new TextareaRenderable(renderer, {
+    width: 12,
+    height: 3,
+    initialValue: "hello",
+  })
+
+  renderer.root.add(textarea)
+  await renderOnce()
+
+  const buffer = OptimizedBuffer.create(16, 4, renderer.widthMethod)
+  expect(renderer.sceneNodeDrawEditorView((textarea as any).sceneNodeHandle, buffer.ptr, 0, 0)).toBe(true)
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("hello")
+
+  buffer.destroy()
   renderer.destroy()
 })

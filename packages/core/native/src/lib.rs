@@ -3618,19 +3618,16 @@ pub extern "C" fn bufferDrawTextBufferView(
     draw_text_buffer_view(buffer, view, x, y);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn bufferDrawEditorView(
-    buffer: *mut NativeOptimizedBuffer,
-    view: *mut NativeEditorView,
+pub(crate) fn draw_editor_view(
+    buffer: &mut NativeOptimizedBuffer,
+    view: &NativeEditorView,
     x: i32,
     y: i32,
 ) {
-    if buffer.is_null() || view.is_null() || x < 0 {
+    if x < 0 {
         return;
     }
 
-    let buffer = unsafe { &mut *buffer };
-    let view = unsafe { &*view };
     let (selection_bg, selection_fg) = view.selection_colors();
     let default_fg = view.default_fg().unwrap_or([1.0, 1.0, 1.0, 1.0]);
     let default_bg = view.default_bg().unwrap_or([0.0, 0.0, 0.0, 0.0]);
@@ -3716,6 +3713,22 @@ pub extern "C" fn bufferDrawEditorView(
             );
         }
     }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn bufferDrawEditorView(
+    buffer: *mut NativeOptimizedBuffer,
+    view: *mut NativeEditorView,
+    x: i32,
+    y: i32,
+) {
+    if buffer.is_null() || view.is_null() {
+        return;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    let view = unsafe { &*view };
+    draw_editor_view(buffer, view, x, y);
 }
 
 #[unsafe(no_mangle)]

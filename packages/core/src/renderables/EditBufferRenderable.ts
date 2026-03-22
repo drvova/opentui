@@ -130,6 +130,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
 
     this.setupMeasureFunc()
     this.setupEventListeners(options)
+    this.syncNativeDrawRegistration()
   }
 
   public get lineInfo(): LineInfo {
@@ -644,9 +645,15 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     )
   }
 
+  private syncNativeDrawRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+    this._ctx.sceneNodeSetEditorViewDraw(this.sceneNodeHandle, this.editorView.ptr)
+  }
+
   public override requestRender(): void {
     if (this.isDestroyed) return
     this.syncNativeMeasureRegistration()
+    this.syncNativeDrawRegistration()
     super.requestRender()
   }
 
@@ -666,6 +673,29 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
   protected renderSelf(buffer: OptimizedBuffer): void {
     this.syncViewportMetrics()
     buffer.drawEditorView(this.editorView, this.x, this.y)
+  }
+
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number },
+  ): boolean {
+    if (
+      this.sceneNodeHandle == null ||
+      this.buffered ||
+      this.renderSelf !== EditBufferRenderable.prototype.renderSelf
+    ) {
+      return false
+    }
+
+    this.syncViewportMetrics()
+    const drawn = this._ctx.sceneNodeDrawEditorView(this.sceneNodeHandle, buffer.ptr, command.x, command.y)
+    if (!drawn) {
+      return false
+    }
+
+    this.markClean()
+    this.renderCursor(buffer)
+    return true
   }
 
   protected renderCursor(buffer: OptimizedBuffer): void {

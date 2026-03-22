@@ -233,6 +233,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "ptr", "i32", "i32"],
       returns: "bool",
     },
+    sceneNodeSetEditorViewDraw: {
+      args: ["u64", "ptr"],
+      returns: "bool",
+    },
+    sceneNodeDrawEditorView: {
+      args: ["u64", "ptr", "i32", "i32"],
+      returns: "bool",
+    },
     sceneNodeCalculateLayout: {
       args: ["u64", "f32", "f32"],
       returns: "bool",
@@ -926,6 +934,8 @@ export interface RenderLib {
     height: number,
   ) => boolean
   sceneNodeDrawTextBufferView: (handle: bigint | number, buffer: Pointer, x: number, y: number) => boolean
+  sceneNodeSetEditorViewDraw: (handle: bigint | number, view: Pointer) => boolean
+  sceneNodeDrawEditorView: (handle: bigint | number, buffer: Pointer, x: number, y: number) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
@@ -2092,6 +2102,14 @@ class FFIRenderLib implements RenderLib {
 
   public sceneNodeDrawTextBufferView(handle: bigint | number, buffer: Pointer, x: number, y: number): boolean {
     return this.opentui.symbols.sceneNodeDrawTextBufferView(handle, buffer, x, y)
+  }
+
+  public sceneNodeSetEditorViewDraw(handle: bigint | number, view: Pointer): boolean {
+    return this.opentui.symbols.sceneNodeSetEditorViewDraw(handle, view)
+  }
+
+  public sceneNodeDrawEditorView(handle: bigint | number, buffer: Pointer, x: number, y: number): boolean {
+    return this.opentui.symbols.sceneNodeDrawEditorView(handle, buffer, x, y)
   }
 
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {

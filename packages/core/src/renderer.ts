@@ -1168,6 +1168,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeDrawTextBufferView(handle, buffer, x, y)
   }
 
+  public sceneNodeSetEditorViewDraw(handle: bigint | number, view: Pointer): boolean {
+    return this.lib.sceneNodeSetEditorViewDraw(handle, view)
+  }
+
+  public sceneNodeDrawEditorView(handle: bigint | number, buffer: Pointer, x: number, y: number): boolean {
+    return this.lib.sceneNodeDrawEditorView(handle, buffer, x, y)
+  }
+
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {
     return this.lib.sceneNodeCalculateLayout(root, width, height)
   }

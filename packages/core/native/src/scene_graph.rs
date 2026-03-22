@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use crate::{
+    NativeEditorView,
     NativeTextBufferView,
     optimized_buffer::{BorderSides as BufferBorderSides, OptimizedBuffer},
 };
@@ -244,6 +245,7 @@ struct SceneNode {
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
     box_draw: Option<SceneBoxDraw>,
+    editor_view: Option<*mut NativeEditorView>,
     visible_children: Option<Vec<u64>>,
     z_index: f32,
     opacity: f32,
@@ -320,6 +322,7 @@ impl SceneGraph {
                 children: Vec::new(),
                 measure: None,
                 box_draw: None,
+                editor_view: None,
                 visible_children: None,
                 z_index: 0.0,
                 opacity: 1.0,
@@ -617,6 +620,38 @@ impl SceneGraph {
         }
 
         crate::draw_text_buffer_view(buffer, unsafe { &**view }, x, y);
+        true
+    }
+
+    fn set_editor_view_draw(&mut self, id: u64, view: *mut NativeEditorView) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if view.is_null() {
+            return false;
+        }
+        node.editor_view = Some(view);
+        true
+    }
+
+    fn draw_editor_view(
+        &self,
+        id: u64,
+        buffer: &mut OptimizedBuffer,
+        x: i32,
+        y: i32,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let Some(view) = node.editor_view else {
+            return false;
+        };
+        if view.is_null() {
+            return false;
+        }
+
+        crate::draw_editor_view(buffer, unsafe { &*view }, x, y);
         true
     }
 
@@ -1769,6 +1804,26 @@ pub extern "C" fn sceneNodeDrawTextBufferView(
         .lock()
         .unwrap()
         .draw_text_buffer_view(id, buffer, x, y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetEditorViewDraw(id: u64, view: *mut NativeEditorView) -> bool {
+    scene_graph().lock().unwrap().set_editor_view_draw(id, view)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeDrawEditorView(
+    id: u64,
+    buffer: *mut OptimizedBuffer,
+    x: i32,
+    y: i32,
+) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    scene_graph().lock().unwrap().draw_editor_view(id, buffer, x, y)
 }
 
 #[unsafe(no_mangle)]
