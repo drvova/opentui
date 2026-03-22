@@ -161,6 +161,19 @@ export const SceneLayoutStruct = defineStruct([
   ["height", "f32"],
 ])
 
+export const TextTableMeasureConfigStruct = defineStruct([
+  ["rowCount", "u32", { default: 0 }],
+  ["columnCount", "u32", { default: 0 }],
+  ["cellPadding", "u32", { default: 0 }],
+  ["wrapMode", "u8", { default: 2 }],
+  ["columnWidthMode", "u8", { default: 1 }],
+  ["columnFitter", "u8", { default: 0 }],
+  ["border", "bool_u8", { default: true }],
+  ["outerBorder", "bool_u8", { default: true }],
+  ["clampAtMost", "bool_u8", { default: true }],
+  ["reserved", "u8", { default: 0 }],
+])
+
 export const SceneStyleStruct = defineStruct([
   ["width", "f32", { default: 0 }],
   ["height", "f32", { default: 0 }],

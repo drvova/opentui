@@ -95,6 +95,21 @@ pub struct NativeSceneStyle {
     pub align_self: u8,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeTextTableMeasureConfig {
+    pub row_count: u32,
+    pub column_count: u32,
+    pub cell_padding: u32,
+    pub wrap_mode: u8,
+    pub column_width_mode: u8,
+    pub column_fitter: u8,
+    pub border: bool,
+    pub outer_border: bool,
+    pub clamp_at_most: bool,
+    pub reserved: u8,
+}
+
 impl Default for NativeSceneStyle {
     fn default() -> Self {
         Self {
@@ -182,12 +197,13 @@ struct SceneNode {
 
 unsafe impl Send for SceneNode {}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum SceneMeasure {
     TextBufferView {
         view: *mut NativeTextBufferView,
         clamp_at_most: bool,
     },
+    TextTable(TextTableMeasure),
     LineNumber {
         view: *mut NativeTextBufferView,
         logical_line_count: u32,
@@ -200,9 +216,23 @@ enum SceneMeasure {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct SceneNodeContext {
     measure: Option<SceneMeasure>,
+}
+
+#[derive(Clone, Debug)]
+struct TextTableMeasure {
+    row_count: usize,
+    column_count: usize,
+    cell_padding: u32,
+    wrap_mode: u8,
+    column_width_mode: u8,
+    column_fitter: u8,
+    border: bool,
+    outer_border: bool,
+    clamp_at_most: bool,
+    cell_views: Vec<usize>,
 }
 
 #[derive(Debug, Default)]
@@ -325,6 +355,42 @@ impl SceneGraph {
         true
     }
 
+    fn set_text_table_measure(
+        &mut self,
+        id: u64,
+        config: NativeTextTableMeasureConfig,
+        cell_views: Vec<usize>,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if !node.children.is_empty() {
+            return false;
+        }
+
+        let row_count = config.row_count as usize;
+        let column_count = config.column_count as usize;
+        if row_count.saturating_mul(column_count) != cell_views.len() {
+            return false;
+        }
+
+        node.measure = Some(SceneMeasure::TextTable(TextTableMeasure {
+            row_count,
+            column_count,
+            cell_padding: config.cell_padding,
+            wrap_mode: config.wrap_mode,
+            column_width_mode: config.column_width_mode,
+            column_fitter: config.column_fitter,
+            border: config.border,
+            outer_border: config.outer_border,
+            clamp_at_most: config.clamp_at_most,
+            cell_views,
+        }));
+        sync_measure_binding(node);
+        node.yoga.mark_dirty();
+        true
+    }
+
     fn set_line_number_measure(
         &mut self,
         id: u64,
@@ -439,7 +505,9 @@ fn scene_graph() -> &'static Mutex<SceneGraph> {
 
 fn sync_measure_binding(node: &mut SceneNode) {
     node.yoga
-        .set_context(Some(Context::new(SceneNodeContext { measure: node.measure })));
+        .set_context(Some(Context::new(SceneNodeContext {
+            measure: node.measure.clone(),
+        })));
     let callback = if node.measure.is_some() {
         Some(scene_graph_measure as yoga::MeasureFunc)
     } else {
@@ -464,7 +532,7 @@ extern "C" fn scene_graph_measure(
         };
     };
 
-    let Some(measure) = context.measure else {
+    let Some(ref measure) = context.measure else {
         return Size {
             width: 1.0,
             height: 1.0,
@@ -475,7 +543,8 @@ extern "C" fn scene_graph_measure(
         SceneMeasure::TextBufferView {
             view,
             clamp_at_most,
-        } => measure_text_buffer_view(view, width, width_mode, height, clamp_at_most),
+        } => measure_text_buffer_view(*view, width, width_mode, height, *clamp_at_most),
+        SceneMeasure::TextTable(table) => measure_text_table(table, width, width_mode),
         SceneMeasure::LineNumber {
             view,
             logical_line_count,
@@ -486,15 +555,38 @@ extern "C" fn scene_graph_measure(
             max_before_width,
             max_after_width,
         } => measure_line_number(
-            view,
-            logical_line_count,
-            min_width,
-            padding_right,
-            line_number_offset,
-            max_custom_line_number,
-            max_before_width,
-            max_after_width,
+            *view,
+            *logical_line_count,
+            *min_width,
+            *padding_right,
+            *line_number_offset,
+            *max_custom_line_number,
+            *max_before_width,
+            *max_after_width,
         ),
+    }
+}
+
+fn measure_text_table(table: &TextTableMeasure, width: f32, width_mode: MeasureMode) -> Size {
+    let layout = compute_text_table_layout(
+        table,
+        if width_mode == MeasureMode::Undefined || width.is_nan() {
+            None
+        } else {
+            Some(width.floor().max(1.0) as u32)
+        },
+    );
+
+    let mut measured_width = layout.table_width.max(1) as f32;
+    let measured_height = layout.table_height.max(1) as f32;
+
+    if table.clamp_at_most && width_mode == MeasureMode::AtMost && width.is_finite() {
+        measured_width = measured_width.min(width.floor().max(1.0));
+    }
+
+    Size {
+        width: measured_width,
+        height: measured_height,
     }
 }
 
@@ -574,6 +666,428 @@ fn measure_line_number(
         width: (base_width + max_before_width + max_after_width) as f32,
         height: virtual_line_count as f32,
     }
+}
+
+#[derive(Clone, Copy)]
+struct TableBorderLayout {
+    left: bool,
+    right: bool,
+    top: bool,
+    bottom: bool,
+    inner_vertical: bool,
+    inner_horizontal: bool,
+}
+
+#[derive(Default)]
+struct TableMeasureLayout {
+    table_width: u32,
+    table_height: u32,
+}
+
+fn compute_text_table_layout(table: &TextTableMeasure, raw_width_constraint: Option<u32>) -> TableMeasureLayout {
+    if table.row_count == 0 || table.column_count == 0 {
+        return TableMeasureLayout::default();
+    }
+
+    let width_constraint = resolve_table_width_constraint(table, raw_width_constraint);
+    let border_layout = resolve_table_border_layout(table);
+    let column_widths = compute_table_column_widths(table, width_constraint, border_layout);
+    let row_heights = compute_table_row_heights(table, &column_widths);
+    let column_offsets = compute_table_offsets(
+        &column_widths,
+        border_layout.left,
+        border_layout.right,
+        border_layout.inner_vertical,
+    );
+    let row_offsets = compute_table_offsets(
+        &row_heights,
+        border_layout.top,
+        border_layout.bottom,
+        border_layout.inner_horizontal,
+    );
+
+    TableMeasureLayout {
+        table_width: column_offsets.last().copied().unwrap_or(0).saturating_add(1),
+        table_height: row_offsets.last().copied().unwrap_or(0).saturating_add(1),
+    }
+}
+
+fn resolve_table_width_constraint(table: &TextTableMeasure, width: Option<u32>) -> Option<u32> {
+    let width = width?;
+    if width == 0 {
+        return None;
+    }
+    if table.wrap_mode != 0 || table.column_width_mode == 1 {
+        return Some(width.max(1));
+    }
+    None
+}
+
+fn resolve_table_border_layout(table: &TextTableMeasure) -> TableBorderLayout {
+    TableBorderLayout {
+        left: table.outer_border,
+        right: table.outer_border,
+        top: table.outer_border,
+        bottom: table.outer_border,
+        inner_vertical: table.border && table.column_count > 1,
+        inner_horizontal: table.border && table.row_count > 1,
+    }
+}
+
+fn get_horizontal_cell_padding(table: &TextTableMeasure) -> u32 {
+    table.cell_padding.saturating_mul(2)
+}
+
+fn get_vertical_cell_padding(table: &TextTableMeasure) -> u32 {
+    table.cell_padding.saturating_mul(2)
+}
+
+fn get_vertical_border_count(table: &TextTableMeasure, border_layout: TableBorderLayout) -> u32 {
+    (border_layout.left as u32)
+        + (border_layout.right as u32)
+        + if border_layout.inner_vertical {
+            table.column_count.saturating_sub(1) as u32
+        } else {
+            0
+        }
+}
+
+fn cell_view_ptr(table: &TextTableMeasure, row: usize, col: usize) -> Option<*mut NativeTextBufferView> {
+    let index = row.checked_mul(table.column_count)?.checked_add(col)?;
+    let raw = *table.cell_views.get(index)?;
+    if raw == 0 {
+        return None;
+    }
+    Some(raw as *mut NativeTextBufferView)
+}
+
+fn compute_table_column_widths(
+    table: &TextTableMeasure,
+    max_table_width: Option<u32>,
+    border_layout: TableBorderLayout,
+) -> Vec<u32> {
+    let horizontal_padding = get_horizontal_cell_padding(table);
+    let mut intrinsic_widths = vec![1 + horizontal_padding; table.column_count];
+
+    for row_idx in 0..table.row_count {
+        for col_idx in 0..table.column_count {
+            let Some(view_ptr) = cell_view_ptr(table, row_idx, col_idx) else {
+                continue;
+            };
+            let view = unsafe { &mut *view_ptr };
+            let measure = view.measure_for_dimensions(0, 10_000);
+            let measured_width = measure.width_cols_max.max(1).saturating_add(horizontal_padding);
+            intrinsic_widths[col_idx] = intrinsic_widths[col_idx].max(measured_width);
+        }
+    }
+
+    let Some(max_table_width) = max_table_width else {
+        return intrinsic_widths;
+    };
+    if max_table_width == 0 {
+        return intrinsic_widths;
+    }
+
+    let max_content_width = max_table_width
+        .saturating_sub(get_vertical_border_count(table, border_layout))
+        .max(1);
+    let current_width: u32 = intrinsic_widths.iter().copied().sum();
+
+    if current_width == max_content_width {
+        return intrinsic_widths;
+    }
+
+    if current_width < max_content_width {
+        if table.column_width_mode == 1 {
+            return expand_table_column_widths(&intrinsic_widths, max_content_width);
+        }
+        return intrinsic_widths;
+    }
+
+    if table.wrap_mode == 0 {
+        return intrinsic_widths;
+    }
+
+    if table.column_fitter == 1 {
+        fit_table_column_widths_balanced(table, &intrinsic_widths, max_content_width)
+    } else {
+        fit_table_column_widths_proportional(table, &intrinsic_widths, max_content_width)
+    }
+}
+
+fn expand_table_column_widths(widths: &[u32], target_content_width: u32) -> Vec<u32> {
+    let mut expanded: Vec<u32> = widths.iter().map(|width| (*width).max(1)).collect();
+    let total_base_width: u32 = expanded.iter().copied().sum();
+
+    if total_base_width >= target_content_width || expanded.is_empty() {
+        return expanded;
+    }
+
+    let columns = expanded.len() as u32;
+    let extra_width = target_content_width - total_base_width;
+    let shared_width = extra_width / columns;
+    let remainder = extra_width % columns;
+
+    for (idx, width) in expanded.iter_mut().enumerate() {
+        *width += shared_width;
+        if (idx as u32) < remainder {
+            *width += 1;
+        }
+    }
+
+    expanded
+}
+
+fn fit_table_column_widths_proportional(
+    table: &TextTableMeasure,
+    widths: &[u32],
+    target_content_width: u32,
+) -> Vec<u32> {
+    let min_width = 1 + get_horizontal_cell_padding(table);
+    let hard_min_widths = vec![min_width; widths.len()];
+    let base_widths: Vec<u32> = widths.iter().map(|width| (*width).max(1)).collect();
+
+    let preferred_min_widths: Vec<u32> = base_widths
+        .iter()
+        .map(|width| (*width).min(min_width + 1))
+        .collect();
+    let preferred_min_total: u32 = preferred_min_widths.iter().copied().sum();
+    let floor_widths = if preferred_min_total <= target_content_width {
+        preferred_min_widths
+    } else {
+        hard_min_widths
+    };
+    let floor_total: u32 = floor_widths.iter().copied().sum();
+    let clamped_target = floor_total.max(target_content_width);
+
+    let total_base_width: u32 = base_widths.iter().copied().sum();
+    if total_base_width <= clamped_target {
+        return base_widths;
+    }
+
+    let shrinkable: Vec<u32> = base_widths
+        .iter()
+        .zip(floor_widths.iter())
+        .map(|(width, floor)| width.saturating_sub(*floor))
+        .collect();
+    let total_shrinkable: u32 = shrinkable.iter().copied().sum();
+    if total_shrinkable == 0 {
+        return floor_widths;
+    }
+
+    let target_shrink = total_base_width - clamped_target;
+    let mut integer_shrink = vec![0u32; base_widths.len()];
+    let mut fractions = vec![0f64; base_widths.len()];
+    let mut used_shrink = 0u32;
+
+    for idx in 0..base_widths.len() {
+        if shrinkable[idx] == 0 {
+            continue;
+        }
+        let exact = (shrinkable[idx] as f64 / total_shrinkable as f64) * target_shrink as f64;
+        let whole = shrinkable[idx].min(exact.floor() as u32);
+        integer_shrink[idx] = whole;
+        fractions[idx] = exact - whole as f64;
+        used_shrink += whole;
+    }
+
+    let mut remaining_shrink = target_shrink.saturating_sub(used_shrink);
+    while remaining_shrink > 0 {
+        let mut best_idx = None;
+        let mut best_fraction = -1f64;
+
+        for idx in 0..base_widths.len() {
+            if shrinkable[idx].saturating_sub(integer_shrink[idx]) == 0 {
+                continue;
+            }
+            if fractions[idx] > best_fraction {
+                best_fraction = fractions[idx];
+                best_idx = Some(idx);
+            }
+        }
+
+        let Some(best_idx) = best_idx else {
+            break;
+        };
+        integer_shrink[best_idx] += 1;
+        fractions[best_idx] = 0.0;
+        remaining_shrink -= 1;
+    }
+
+    base_widths
+        .iter()
+        .zip(floor_widths.iter())
+        .zip(integer_shrink.iter())
+        .map(|((width, floor), shrink)| floor.max(&width.saturating_sub(*shrink)).to_owned())
+        .collect()
+}
+
+fn fit_table_column_widths_balanced(
+    table: &TextTableMeasure,
+    widths: &[u32],
+    target_content_width: u32,
+) -> Vec<u32> {
+    let min_width = 1 + get_horizontal_cell_padding(table);
+    let hard_min_widths = vec![min_width; widths.len()];
+    let base_widths: Vec<u32> = widths.iter().map(|width| (*width).max(1)).collect();
+    let total_base_width: u32 = base_widths.iter().copied().sum();
+    let columns = base_widths.len() as u32;
+
+    if columns == 0 || total_base_width <= target_content_width {
+        return base_widths;
+    }
+
+    let even_share = min_width.max(target_content_width / columns.max(1));
+    let preferred_min_widths: Vec<u32> = base_widths.iter().map(|width| (*width).min(even_share)).collect();
+    let preferred_min_total: u32 = preferred_min_widths.iter().copied().sum();
+    let floor_widths = if preferred_min_total <= target_content_width {
+        preferred_min_widths
+    } else {
+        hard_min_widths
+    };
+    let floor_total: u32 = floor_widths.iter().copied().sum();
+    let clamped_target = floor_total.max(target_content_width);
+
+    if total_base_width <= clamped_target {
+        return base_widths;
+    }
+
+    let shrinkable: Vec<u32> = base_widths
+        .iter()
+        .zip(floor_widths.iter())
+        .map(|(width, floor)| width.saturating_sub(*floor))
+        .collect();
+    let total_shrinkable: u32 = shrinkable.iter().copied().sum();
+    if total_shrinkable == 0 {
+        return floor_widths;
+    }
+
+    let target_shrink = total_base_width - clamped_target;
+    let shrink = allocate_table_shrink_by_weight(&shrinkable, target_shrink, true);
+
+    base_widths
+        .iter()
+        .zip(floor_widths.iter())
+        .zip(shrink.iter())
+        .map(|((width, floor), shrink)| floor.max(&width.saturating_sub(*shrink)).to_owned())
+        .collect()
+}
+
+fn allocate_table_shrink_by_weight(shrinkable: &[u32], target_shrink: u32, sqrt_mode: bool) -> Vec<u32> {
+    let mut shrink = vec![0u32; shrinkable.len()];
+    if target_shrink == 0 {
+        return shrink;
+    }
+
+    let weights: Vec<f64> = shrinkable
+        .iter()
+        .map(|value| {
+            if *value == 0 {
+                0.0
+            } else if sqrt_mode {
+                (*value as f64).sqrt()
+            } else {
+                *value as f64
+            }
+        })
+        .collect();
+    let total_weight: f64 = weights.iter().sum();
+    if total_weight <= 0.0 {
+        return shrink;
+    }
+
+    let mut fractions = vec![0f64; shrinkable.len()];
+    let mut used_shrink = 0u32;
+
+    for idx in 0..shrinkable.len() {
+        if shrinkable[idx] == 0 || weights[idx] <= 0.0 {
+            continue;
+        }
+        let exact = (weights[idx] / total_weight) * target_shrink as f64;
+        let whole = shrinkable[idx].min(exact.floor() as u32);
+        shrink[idx] = whole;
+        fractions[idx] = exact - whole as f64;
+        used_shrink += whole;
+    }
+
+    let mut remaining_shrink = target_shrink.saturating_sub(used_shrink);
+    while remaining_shrink > 0 {
+        let mut best_idx = None;
+        let mut best_fraction = -1f64;
+
+        for idx in 0..shrinkable.len() {
+            if shrinkable[idx].saturating_sub(shrink[idx]) == 0 {
+                continue;
+            }
+            if best_idx.is_none()
+                || fractions[idx] > best_fraction
+                || (fractions[idx] == best_fraction
+                    && shrinkable[idx] > shrinkable[best_idx.unwrap()])
+            {
+                best_idx = Some(idx);
+                best_fraction = fractions[idx];
+            }
+        }
+
+        let Some(best_idx) = best_idx else {
+            break;
+        };
+        shrink[best_idx] += 1;
+        fractions[best_idx] = 0.0;
+        remaining_shrink -= 1;
+    }
+
+    shrink
+}
+
+fn compute_table_row_heights(table: &TextTableMeasure, column_widths: &[u32]) -> Vec<u32> {
+    let horizontal_padding = get_horizontal_cell_padding(table);
+    let vertical_padding = get_vertical_cell_padding(table);
+    let mut row_heights = vec![1 + vertical_padding; table.row_count];
+
+    for row_idx in 0..table.row_count {
+        for col_idx in 0..table.column_count {
+            let Some(view_ptr) = cell_view_ptr(table, row_idx, col_idx) else {
+                continue;
+            };
+            let view = unsafe { &mut *view_ptr };
+            let width = column_widths
+                .get(col_idx)
+                .copied()
+                .unwrap_or(1)
+                .saturating_sub(horizontal_padding)
+                .max(1);
+            let measure = view.measure_for_dimensions(width, 10_000);
+            let line_count = measure.line_count.max(1);
+            row_heights[row_idx] = row_heights[row_idx].max(line_count.saturating_add(vertical_padding));
+        }
+    }
+
+    row_heights
+}
+
+fn compute_table_offsets(
+    parts: &[u32],
+    start_boundary: bool,
+    end_boundary: bool,
+    include_inner_boundaries: bool,
+) -> Vec<u32> {
+    let mut offsets = vec![if start_boundary { 0 } else { u32::MAX }];
+    let mut cursor = *offsets.first().unwrap_or(&0);
+
+    for (idx, size) in parts.iter().enumerate() {
+        let has_boundary_after = if idx < parts.len().saturating_sub(1) {
+            include_inner_boundaries
+        } else {
+            end_boundary
+        };
+        cursor = cursor
+            .wrapping_add(*size)
+            .wrapping_add(if has_boundary_after { 1 } else { 0 });
+        offsets.push(cursor);
+    }
+
+    offsets
 }
 
 fn apply_style(node: &mut Node, style: NativeSceneStyle) {
@@ -781,6 +1295,31 @@ pub extern "C" fn sceneNodeSetTextBufferViewMeasure(
         .lock()
         .unwrap()
         .set_text_buffer_view_measure(id, view, clamp_at_most)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetTextTableMeasure(
+    id: u64,
+    config_ptr: *const NativeTextTableMeasureConfig,
+    cell_views_ptr: *const u64,
+    cell_view_count: usize,
+) -> bool {
+    if config_ptr.is_null() {
+        return false;
+    }
+    let config = unsafe { std::ptr::read_unaligned(config_ptr) };
+    let cell_views = if cell_view_count == 0 || cell_views_ptr.is_null() {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(cell_views_ptr, cell_view_count) }
+            .iter()
+            .map(|ptr| *ptr as usize)
+            .collect()
+    };
+    scene_graph()
+        .lock()
+        .unwrap()
+        .set_text_table_measure(id, config, cell_views)
 }
 
 #[unsafe(no_mangle)]

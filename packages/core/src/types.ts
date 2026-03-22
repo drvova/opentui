@@ -77,6 +77,11 @@ export interface RenderContext extends EventEmitter {
     viewPtr: unknown,
     clampAtMost: boolean,
   ) => boolean
+  sceneNodeSetTextTableMeasure: (
+    handle: bigint | number,
+    config: Record<string, unknown>,
+    cellViewPtrs: readonly unknown[],
+  ) => boolean
   sceneNodeSetLineNumberMeasure: (
     handle: bigint | number,
     viewPtr: unknown,

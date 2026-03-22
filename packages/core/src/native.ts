@@ -31,6 +31,7 @@ import {
   GridDrawOptionsStruct,
   SceneLayoutStruct,
   SceneStyleStruct,
+  TextTableMeasureConfigStruct,
   NativeSpanFeedOptionsStruct,
   NativeSpanFeedStatsStruct,
   ReserveInfoStruct,
@@ -205,6 +206,10 @@ function getOpenTUILib(libPath?: string) {
     },
     sceneNodeSetTextBufferViewMeasure: {
       args: ["u64", "ptr", "bool"],
+      returns: "bool",
+    },
+    sceneNodeSetTextTableMeasure: {
+      args: ["u64", "ptr", "ptr", "usize"],
       returns: "bool",
     },
     sceneNodeSetLineNumberMeasure: {
@@ -850,6 +855,11 @@ export interface RenderLib {
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
   sceneNodeSetTextBufferViewMeasure: (handle: bigint | number, viewPtr: Pointer, clampAtMost: boolean) => boolean
+  sceneNodeSetTextTableMeasure: (
+    handle: bigint | number,
+    config: Record<string, unknown>,
+    cellViewPtrs: readonly Pointer[],
+  ) => boolean
   sceneNodeSetLineNumberMeasure: (
     handle: bigint | number,
     viewPtr: Pointer,
@@ -1917,6 +1927,19 @@ class FFIRenderLib implements RenderLib {
 
   public sceneNodeSetTextBufferViewMeasure(handle: bigint | number, viewPtr: Pointer, clampAtMost: boolean): boolean {
     return this.opentui.symbols.sceneNodeSetTextBufferViewMeasure(handle, viewPtr, clampAtMost)
+  }
+
+  public sceneNodeSetTextTableMeasure(
+    handle: bigint | number,
+    config: Record<string, unknown>,
+    cellViewPtrs: readonly Pointer[],
+  ): boolean {
+    const configBuffer = TextTableMeasureConfigStruct.pack(config as any)
+    const ptrArray = new BigUint64Array(cellViewPtrs.length)
+    for (let i = 0; i < cellViewPtrs.length; i++) {
+      ptrArray[i] = BigInt(cellViewPtrs[i] as unknown as bigint | number)
+    }
+    return this.opentui.symbols.sceneNodeSetTextTableMeasure(handle, ptr(configBuffer), ptr(ptrArray), cellViewPtrs.length)
   }
 
   public sceneNodeSetLineNumberMeasure(

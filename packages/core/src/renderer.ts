@@ -1070,6 +1070,14 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeSetTextBufferViewMeasure(handle, viewPtr as any, clampAtMost)
   }
 
+  public sceneNodeSetTextTableMeasure(
+    handle: bigint | number,
+    config: Record<string, unknown>,
+    cellViewPtrs: readonly unknown[],
+  ): boolean {
+    return this.lib.sceneNodeSetTextTableMeasure(handle, config, cellViewPtrs as any)
+  }
+
   public sceneNodeSetLineNumberMeasure(
     handle: bigint | number,
     viewPtr: unknown,

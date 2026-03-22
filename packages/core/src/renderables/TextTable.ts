@@ -435,7 +435,34 @@ export class TextTableRenderable extends Renderable {
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
-    this.markUsesYogaMeasureFunc()
+    this.markUsesYogaMeasureFunc(false)
+  }
+
+  private syncNativeMeasureRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+
+    const cellViewPtrs = this._cells.flatMap((row) => row.map((cell) => cell.textBufferView.ptr))
+    this._ctx.sceneNodeSetTextTableMeasure(
+      this.sceneNodeHandle,
+      {
+        rowCount: this._rowCount,
+        columnCount: this._columnCount,
+        cellPadding: this._cellPadding,
+        wrapMode: this._wrapMode === "none" ? 0 : this._wrapMode === "char" ? 1 : 2,
+        columnWidthMode: this._columnWidthMode === "full" ? 1 : 0,
+        columnFitter: this._columnFitter === "balanced" ? 1 : 0,
+        border: this._border,
+        outerBorder: this._outerBorder,
+        clampAtMost: this._positionType !== "absolute",
+      },
+      cellViewPtrs,
+    )
+  }
+
+  public override requestRender(): void {
+    if (this.isDestroyed) return
+    this.syncNativeMeasureRegistration()
+    super.requestRender()
   }
 
   private rebuildCells(): void {
