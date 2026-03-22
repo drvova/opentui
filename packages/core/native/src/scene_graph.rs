@@ -448,6 +448,10 @@ impl SceneGraph {
         self.nodes.get(&id).map(|node| node.children.len()).unwrap_or(0)
     }
 
+    fn child_handles(&self, id: u64) -> Option<&[u64]> {
+        self.nodes.get(&id).map(|node| node.children.as_slice())
+    }
+
     fn insert_child(&mut self, parent: u64, child: u64, index: usize) -> bool {
         if parent == child {
             return false;
@@ -1373,6 +1377,27 @@ pub extern "C" fn sceneNodeGetLayout(id: u64, out_ptr: *mut NativeSceneLayout) -
 #[unsafe(no_mangle)]
 pub extern "C" fn sceneNodeGetChildCount(id: u64) -> usize {
     scene_graph().lock().unwrap().child_count(id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeGetChildren(id: u64, out_ptr: *mut u64, max_count: usize) -> usize {
+    if out_ptr.is_null() || max_count == 0 {
+        return 0;
+    }
+
+    let graph = scene_graph().lock().unwrap();
+    let Some(children) = graph.child_handles(id) else {
+        return 0;
+    };
+
+    let count = children.len().min(max_count);
+    for (index, child) in children.iter().take(count).enumerate() {
+        unsafe {
+            std::ptr::write_unaligned(out_ptr.add(index), *child);
+        }
+    }
+
+    count
 }
 
 #[cfg(test)]

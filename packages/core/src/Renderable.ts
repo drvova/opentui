@@ -317,6 +317,7 @@ function positionTypeKind(value: PositionType): number {
 
 export abstract class Renderable extends BaseRenderable {
   static renderablesByNumber: Map<number, Renderable> = new Map()
+  static renderablesBySceneHandle: Map<bigint | number, Renderable> = new Map()
 
   protected _isDestroyed: boolean = false
   protected _ctx: RenderContext
@@ -581,7 +582,7 @@ export abstract class Renderable extends BaseRenderable {
   public handlePaste?(event: PasteEvent): void
 
   public findDescendantById(id: string): Renderable | undefined {
-    for (const child of this._childrenInLayoutOrder) {
+    for (const child of this.getChildren()) {
       if (child.id === id) return child
       if (isRenderable(child)) {
         const found = child.findDescendantById(id)
@@ -600,6 +601,7 @@ export abstract class Renderable extends BaseRenderable {
   protected createNativeSceneNode(): void {
     try {
       this.sceneNodeHandle = this._ctx.createSceneNode()
+      Renderable.renderablesBySceneHandle.set(this.sceneNodeHandle, this)
     } catch (error) {
       console.error(`Failed to create native scene node for ${this.id}:`, error)
       this.sceneNodeHandle = null
@@ -609,6 +611,7 @@ export abstract class Renderable extends BaseRenderable {
   protected destroyNativeSceneNode(): void {
     if (this.sceneNodeHandle == null) return
     try {
+      Renderable.renderablesBySceneHandle.delete(this.sceneNodeHandle)
       this._ctx.destroySceneNode(this.sceneNodeHandle)
     } catch (error) {
       console.error(`Failed to destroy native scene node for ${this.id}:`, error)
@@ -1267,6 +1270,28 @@ export abstract class Renderable extends BaseRenderable {
     return this.yogaNode
   }
 
+  private getNativeOrderedChildren(): Renderable[] | null {
+    if (this.sceneNodeHandle == null) {
+      return null
+    }
+
+    const handles = this._ctx.sceneNodeGetChildren(this.sceneNodeHandle)
+    if (handles.length === 0) {
+      return []
+    }
+
+    const children: Renderable[] = []
+    for (const handle of handles) {
+      const renderable = Renderable.renderablesBySceneHandle.get(handle)
+      if (!renderable) {
+        return null
+      }
+      children.push(renderable)
+    }
+
+    return children
+  }
+
   protected markUsesYogaMeasureFunc(blocksNativeSceneLayout: boolean = true): void {
     this.usesYogaMeasureFunc = true
     this.blocksNativeSceneLayout = blocksNativeSceneLayout
@@ -1577,11 +1602,11 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public getChildren(): Renderable[] {
-    return [...this._childrenInLayoutOrder]
+    return this.getNativeOrderedChildren() ?? [...this._childrenInLayoutOrder]
   }
 
   public getChildrenCount(): number {
-    return this._childrenInLayoutOrder.length
+    return this.sceneNodeHandle != null ? this._ctx.sceneNodeGetChildCount(this.sceneNodeHandle) : this._childrenInLayoutOrder.length
   }
 
   public updateLayout(deltaTime: number, renderList: RenderCommand[] = []): void {
@@ -1746,7 +1771,7 @@ export abstract class Renderable extends BaseRenderable {
   public destroyRecursively(): void {
     // Destroy children first to ensure removal as destroy clears child array
     // Make a copy of the children array to avoid iteration issues when children are destroyed
-    const children = [...this._childrenInLayoutOrder]
+    const children = this.getChildren()
     for (const child of children) {
       child.destroyRecursively()
     }

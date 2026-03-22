@@ -1114,6 +1114,10 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeGetChildCount(handle)
   }
 
+  public sceneNodeGetChildren(handle: bigint | number): Array<bigint | number> {
+    return this.lib.sceneNodeGetChildren(handle)
+  }
+
   public get capabilities(): any | null {
     return this._capabilities
   }

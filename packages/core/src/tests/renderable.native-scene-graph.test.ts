@@ -43,6 +43,26 @@ test("Renderable mirrors tree mutations into the native scene graph", async () =
   renderer.destroy()
 })
 
+test("Renderable child reads prefer native scene graph order", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const parent = new BoxRenderable(renderer, { width: 20, height: 10 })
+  const first = new BoxRenderable(renderer, { id: "first", width: 5, height: 2 })
+  const second = new BoxRenderable(renderer, { id: "second", width: 5, height: 2 })
+  const inserted = new BoxRenderable(renderer, { id: "inserted", width: 5, height: 2 })
+
+  renderer.root.add(parent)
+  parent.add(first)
+  parent.add(second)
+  parent.insertBefore(inserted, second)
+  await renderOnce()
+
+  expect(parent.getChildren().map((child) => child.id)).toEqual(["first", "inserted", "second"])
+  expect(parent.getChildrenCount()).toBe(3)
+
+  renderer.destroy()
+})
+
 test("native scene graph matches Yoga layout for spacing and border styles", async () => {
   const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
 
