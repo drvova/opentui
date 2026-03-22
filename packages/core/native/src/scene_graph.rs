@@ -1,0 +1,392 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+use yoga::{Direction, Display, Edge, FlexDirection, Layout, Node, Overflow, PositionType, StyleUnit};
+
+static NEXT_SCENE_NODE_ID: AtomicU64 = AtomicU64::new(1);
+static SCENE_GRAPH: OnceLock<Mutex<SceneGraph>> = OnceLock::new();
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeSceneLayout {
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeSceneStyle {
+    pub width: f32,
+    pub height: f32,
+    pub min_width: f32,
+    pub min_height: f32,
+    pub max_width: f32,
+    pub max_height: f32,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: f32,
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+    pub margin_top: f32,
+    pub margin_right: f32,
+    pub margin_bottom: f32,
+    pub margin_left: f32,
+    pub padding_top: f32,
+    pub padding_right: f32,
+    pub padding_bottom: f32,
+    pub padding_left: f32,
+    pub width_unit: u8,
+    pub height_unit: u8,
+    pub min_width_unit: u8,
+    pub min_height_unit: u8,
+    pub max_width_unit: u8,
+    pub max_height_unit: u8,
+    pub flex_basis_unit: u8,
+    pub left_unit: u8,
+    pub right_unit: u8,
+    pub top_unit: u8,
+    pub bottom_unit: u8,
+    pub margin_top_unit: u8,
+    pub margin_right_unit: u8,
+    pub margin_bottom_unit: u8,
+    pub margin_left_unit: u8,
+    pub padding_top_unit: u8,
+    pub padding_right_unit: u8,
+    pub padding_bottom_unit: u8,
+    pub padding_left_unit: u8,
+    pub display: u8,
+    pub flex_direction: u8,
+    pub position_type: u8,
+    pub overflow: u8,
+}
+
+#[derive(Debug)]
+struct SceneNode {
+    yoga: Node,
+    parent: Option<u64>,
+    children: Vec<u64>,
+}
+
+unsafe impl Send for SceneNode {}
+
+#[derive(Debug, Default)]
+struct SceneGraph {
+    nodes: HashMap<u64, Box<SceneNode>>,
+}
+
+impl SceneGraph {
+    fn create_node(&mut self) -> u64 {
+        let id = NEXT_SCENE_NODE_ID.fetch_add(1, Ordering::Relaxed);
+        self.nodes.insert(
+            id,
+            Box::new(SceneNode {
+                yoga: Node::new(),
+                parent: None,
+                children: Vec::new(),
+            }),
+        );
+        id
+    }
+
+    fn destroy_node(&mut self, id: u64) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let parent = node.parent;
+        let children = node.children.clone();
+        let _ = node;
+
+        if let Some(parent) = parent {
+            let _ = self.remove_child(parent, id);
+        }
+        for child in children {
+            if let Some(node) = self.nodes.get_mut(&child) {
+                node.parent = None;
+            }
+        }
+        self.nodes.remove(&id).is_some()
+    }
+
+    fn append_child(&mut self, parent: u64, child: u64) -> bool {
+        let index = match self.nodes.get(&parent) {
+            Some(parent_node) => parent_node.children.len(),
+            None => return false,
+        };
+        self.insert_child(parent, child, index)
+    }
+
+    fn insert_before(&mut self, parent: u64, child: u64, anchor: u64) -> bool {
+        let Some(parent_node) = self.nodes.get(&parent) else {
+            return false;
+        };
+        let Some(index) = parent_node.children.iter().position(|existing| *existing == anchor) else {
+            return false;
+        };
+        self.insert_child(parent, child, index)
+    }
+
+    fn remove_child(&mut self, parent: u64, child: u64) -> bool {
+        let (parent_ptr, child_ptr, child_index) = {
+            let Some(parent_node) = self.nodes.get(&parent) else {
+                return false;
+            };
+            let Some(child_index) = parent_node.children.iter().position(|existing| *existing == child) else {
+                return false;
+            };
+            let Some(child_node) = self.nodes.get(&child) else {
+                return false;
+            };
+            (
+                &parent_node.yoga as *const Node as *mut Node,
+                &child_node.yoga as *const Node as *mut Node,
+                child_index,
+            )
+        };
+
+        unsafe {
+            (*parent_ptr).remove_child(&mut *child_ptr);
+        }
+
+        if let Some(parent_node) = self.nodes.get_mut(&parent) {
+            parent_node.children.remove(child_index);
+        }
+        if let Some(child_node) = self.nodes.get_mut(&child) {
+            child_node.parent = None;
+        }
+        true
+    }
+
+    fn set_style(&mut self, id: u64, style: NativeSceneStyle) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        apply_style(&mut node.yoga, style);
+        true
+    }
+
+    fn calculate_layout(&mut self, root: u64, width: f32, height: f32) -> bool {
+        let Some(node) = self.nodes.get_mut(&root) else {
+            return false;
+        };
+        node.yoga.calculate_layout(width, height, Direction::LTR);
+        true
+    }
+
+    fn get_layout(&self, id: u64) -> Option<NativeSceneLayout> {
+        self.nodes.get(&id).map(|node| {
+            let layout: Layout = node.yoga.get_layout();
+            NativeSceneLayout {
+                left: layout.left(),
+                top: layout.top(),
+                width: layout.width(),
+                height: layout.height(),
+            }
+        })
+    }
+
+    fn child_count(&self, id: u64) -> usize {
+        self.nodes.get(&id).map(|node| node.children.len()).unwrap_or(0)
+    }
+
+    fn insert_child(&mut self, parent: u64, child: u64, index: usize) -> bool {
+        if parent == child {
+            return false;
+        }
+
+        let old_parent = self.nodes.get(&child).and_then(|node| node.parent);
+        if let Some(old_parent) = old_parent {
+            let _ = self.remove_child(old_parent, child);
+        }
+
+        let (parent_ptr, child_ptr) = {
+            let Some(parent_node) = self.nodes.get(&parent) else {
+                return false;
+            };
+            let Some(child_node) = self.nodes.get(&child) else {
+                return false;
+            };
+            (
+                &parent_node.yoga as *const Node as *mut Node,
+                &child_node.yoga as *const Node as *mut Node,
+            )
+        };
+
+        let insert_index = self
+            .nodes
+            .get(&parent)
+            .map(|node| index.min(node.children.len()))
+            .unwrap_or(index);
+
+        unsafe {
+            (*parent_ptr).insert_child(&mut *child_ptr, insert_index);
+        }
+
+        if let Some(parent_node) = self.nodes.get_mut(&parent) {
+            parent_node.children.insert(insert_index, child);
+        }
+        if let Some(child_node) = self.nodes.get_mut(&child) {
+            child_node.parent = Some(parent);
+        }
+        true
+    }
+}
+
+fn scene_graph() -> &'static Mutex<SceneGraph> {
+    SCENE_GRAPH.get_or_init(|| Mutex::new(SceneGraph::default()))
+}
+
+fn apply_style(node: &mut Node, style: NativeSceneStyle) {
+    node.set_width(style_unit(style.width, style.width_unit));
+    node.set_height(style_unit(style.height, style.height_unit));
+    node.set_min_width(style_unit(style.min_width, style.min_width_unit));
+    node.set_min_height(style_unit(style.min_height, style.min_height_unit));
+    node.set_max_width(style_unit(style.max_width, style.max_width_unit));
+    node.set_max_height(style_unit(style.max_height, style.max_height_unit));
+    node.set_flex_grow(style.flex_grow);
+    node.set_flex_shrink(style.flex_shrink);
+    node.set_flex_basis(style_unit(style.flex_basis, style.flex_basis_unit));
+    node.set_position(Edge::Left, style_unit(style.left, style.left_unit));
+    node.set_position(Edge::Right, style_unit(style.right, style.right_unit));
+    node.set_position(Edge::Top, style_unit(style.top, style.top_unit));
+    node.set_position(Edge::Bottom, style_unit(style.bottom, style.bottom_unit));
+    node.set_margin(Edge::Top, style_unit(style.margin_top, style.margin_top_unit));
+    node.set_margin(Edge::Right, style_unit(style.margin_right, style.margin_right_unit));
+    node.set_margin(Edge::Bottom, style_unit(style.margin_bottom, style.margin_bottom_unit));
+    node.set_margin(Edge::Left, style_unit(style.margin_left, style.margin_left_unit));
+    node.set_padding(Edge::Top, style_unit(style.padding_top, style.padding_top_unit));
+    node.set_padding(Edge::Right, style_unit(style.padding_right, style.padding_right_unit));
+    node.set_padding(Edge::Bottom, style_unit(style.padding_bottom, style.padding_bottom_unit));
+    node.set_padding(Edge::Left, style_unit(style.padding_left, style.padding_left_unit));
+    node.set_display(match style.display {
+        1 => Display::None,
+        _ => Display::Flex,
+    });
+    node.set_flex_direction(match style.flex_direction {
+        1 => FlexDirection::ColumnReverse,
+        2 => FlexDirection::Row,
+        3 => FlexDirection::RowReverse,
+        _ => FlexDirection::Column,
+    });
+    node.set_position_type(match style.position_type {
+        1 => PositionType::Absolute,
+        _ => PositionType::Relative,
+    });
+    node.set_overflow(match style.overflow {
+        1 => Overflow::Hidden,
+        2 => Overflow::Scroll,
+        _ => Overflow::Visible,
+    });
+}
+
+fn style_unit(value: f32, unit: u8) -> StyleUnit {
+    match unit {
+        1 => StyleUnit::Auto,
+        2 => StyleUnit::Percent(value.into()),
+        3 => StyleUnit::UndefinedValue,
+        _ => StyleUnit::Point(value.into()),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn createSceneNode() -> u64 {
+    scene_graph().lock().unwrap().create_node()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn destroySceneNode(id: u64) -> bool {
+    scene_graph().lock().unwrap().destroy_node(id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeAppendChild(parent: u64, child: u64) -> bool {
+    scene_graph().lock().unwrap().append_child(parent, child)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeInsertBefore(parent: u64, child: u64, anchor: u64) -> bool {
+    scene_graph().lock().unwrap().insert_before(parent, child, anchor)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeRemoveChild(parent: u64, child: u64) -> bool {
+    scene_graph().lock().unwrap().remove_child(parent, child)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetStyle(id: u64, style_ptr: *const NativeSceneStyle) -> bool {
+    if style_ptr.is_null() {
+        return false;
+    }
+    let style = unsafe { *style_ptr };
+    scene_graph().lock().unwrap().set_style(id, style)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeCalculateLayout(root: u64, width: f32, height: f32) -> bool {
+    scene_graph().lock().unwrap().calculate_layout(root, width, height)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeGetLayout(id: u64, out_ptr: *mut NativeSceneLayout) -> bool {
+    if out_ptr.is_null() {
+        return false;
+    }
+    let layout = {
+        let graph = scene_graph().lock().unwrap();
+        graph.get_layout(id)
+    };
+    let Some(layout) = layout else {
+        return false;
+    };
+    unsafe {
+        *out_ptr = layout;
+    }
+    true
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeGetChildCount(id: u64) -> usize {
+    scene_graph().lock().unwrap().child_count(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NativeSceneLayout, NativeSceneStyle, createSceneNode, destroySceneNode, sceneNodeAppendChild, sceneNodeCalculateLayout, sceneNodeGetChildCount, sceneNodeGetLayout, sceneNodeSetStyle};
+
+    #[test]
+    fn scene_graph_calculates_simple_column_layout() {
+        let root = createSceneNode();
+        let child = createSceneNode();
+
+        let root_style = NativeSceneStyle {
+            width: 100.0,
+            height: 40.0,
+            flex_direction: 0,
+            ..NativeSceneStyle::default()
+        };
+        let child_style = NativeSceneStyle {
+            width: 50.0,
+            height: 10.0,
+            ..NativeSceneStyle::default()
+        };
+
+        assert!(sceneNodeSetStyle(root, &root_style));
+        assert!(sceneNodeSetStyle(child, &child_style));
+        assert!(sceneNodeAppendChild(root, child));
+        assert_eq!(sceneNodeGetChildCount(root), 1);
+        assert!(sceneNodeCalculateLayout(root, 100.0, 40.0));
+
+        let mut root_layout = NativeSceneLayout::default();
+        assert!(sceneNodeGetLayout(root, &mut root_layout));
+        assert!(root_layout.width >= 0.0);
+        assert!(root_layout.height >= 0.0);
+
+        assert!(destroySceneNode(child));
+        assert!(destroySceneNode(root));
+    }
+}
