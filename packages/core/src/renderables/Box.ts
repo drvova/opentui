@@ -94,6 +94,7 @@ export class BoxRenderable extends Renderable {
       options.gap !== undefined || options.rowGap !== undefined || options.columnGap !== undefined
     if (hasInitialGapProps) {
       this.applyYogaGap(options)
+      this.requestRender()
     }
   }
 

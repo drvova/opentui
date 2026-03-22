@@ -631,6 +631,7 @@ export abstract class EditBufferRenderable extends Renderable implements LineInf
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
+    this.markUsesYogaMeasureFunc()
   }
 
   render(buffer: OptimizedBuffer, deltaTime: number): void {

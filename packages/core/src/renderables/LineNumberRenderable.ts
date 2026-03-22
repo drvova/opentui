@@ -122,6 +122,7 @@ class GutterRenderable extends Renderable {
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
+    this.markUsesYogaMeasureFunc()
   }
 
   public remeasure(): void {

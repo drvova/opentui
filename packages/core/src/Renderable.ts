@@ -230,6 +230,14 @@ function yogaValue(value: YogaValue): { value: number; unit: number } {
   }
 }
 
+function yogaGapValue(value: number): { value: number; unit: number } {
+  if (Number.isFinite(value)) {
+    return { value, unit: 0 }
+  }
+
+  return { value: 0, unit: 3 }
+}
+
 function overflowKind(value: OverflowString): number {
   if (value === "hidden") return 1
   if (value === "scroll") return 2
@@ -346,6 +354,7 @@ export abstract class Renderable extends BaseRenderable {
   protected _position: Position = {}
   protected _opacity: number = 1.0
   private _flexShrink: number = 1
+  protected usesYogaMeasureFunc: boolean = false
 
   private renderableMapById: Map<string, Renderable> = new Map()
   protected _childrenInLayoutOrder: Renderable[] = []
@@ -636,9 +645,9 @@ export abstract class Renderable extends BaseRenderable {
     const paddingRight = yogaValue(node.getPadding(Edge.Right))
     const paddingBottom = yogaValue(node.getPadding(Edge.Bottom))
     const paddingLeft = yogaValue(node.getPadding(Edge.Left))
-    const gapAll = yogaValue(node.getGap(Gutter.All))
-    const gapRow = yogaValue(node.getGap(Gutter.Row))
-    const gapColumn = yogaValue(node.getGap(Gutter.Column))
+    const gapAll = yogaGapValue(node.getGap(Gutter.All))
+    const gapRow = yogaGapValue(node.getGap(Gutter.Row))
+    const gapColumn = yogaGapValue(node.getGap(Gutter.Column))
 
     const style = {
       width: width.value,
@@ -1257,8 +1266,42 @@ export abstract class Renderable extends BaseRenderable {
     return this.yogaNode
   }
 
+  protected markUsesYogaMeasureFunc(): void {
+    this.usesYogaMeasureFunc = true
+  }
+
+  protected subtreeUsesYogaMeasureFunc(): boolean {
+    if (this.usesYogaMeasureFunc) {
+      return true
+    }
+
+    for (const child of this._childrenInLayoutOrder) {
+      if (child.subtreeUsesYogaMeasureFunc()) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  protected shouldReadNativeSceneLayout(): boolean {
+    if (this.sceneNodeHandle == null) {
+      return false
+    }
+
+    let current: Renderable = this
+    while (current.parent) {
+      current = current.parent
+    }
+
+    return current instanceof RootRenderable && current.isNativeSceneLayoutActive()
+  }
+
   public updateFromLayout(): void {
-    const layout = this.yogaNode.getComputedLayout()
+    const layout =
+      this.shouldReadNativeSceneLayout() && this.sceneNodeHandle != null
+        ? this._ctx.sceneNodeGetLayout(this.sceneNodeHandle) ?? this.yogaNode.getComputedLayout()
+        : this.yogaNode.getComputedLayout()
 
     const oldX = this._x
     const oldY = this._y
@@ -1858,6 +1901,7 @@ export type RenderCommand =
 
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
+  private nativeSceneLayoutActive: boolean = false
 
   constructor(ctx: RenderContext) {
     super(ctx, { id: "__root__", zIndex: 0, visible: true, width: ctx.width, height: ctx.height, enableLayout: true })
@@ -1940,11 +1984,17 @@ export class RootRenderable extends Renderable {
   }
 
   public calculateLayout(): void {
-    if (this.sceneNodeHandle != null) {
+    this.nativeSceneLayoutActive = !this.subtreeUsesYogaMeasureFunc()
+
+    if (this.nativeSceneLayoutActive && this.sceneNodeHandle != null) {
       this._ctx.sceneNodeCalculateLayout(this.sceneNodeHandle, this.width, this.height)
     }
     this.yogaNode.calculateLayout(this.width, this.height, Direction.LTR)
     this.emit(LayoutEvents.LAYOUT_CHANGED)
+  }
+
+  public isNativeSceneLayoutActive(): boolean {
+    return this.nativeSceneLayoutActive
   }
 
   public resize(width: number, height: number): void {

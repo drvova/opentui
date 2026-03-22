@@ -430,6 +430,7 @@ export abstract class TextBufferRenderable extends Renderable implements LineInf
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
+    this.markUsesYogaMeasureFunc()
   }
 
   shouldStartSelection(x: number, y: number): boolean {

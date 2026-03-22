@@ -17,7 +17,7 @@ pub struct NativeSceneLayout {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct NativeSceneStyle {
     pub width: f32,
     pub height: f32,
@@ -89,6 +89,83 @@ pub struct NativeSceneStyle {
     pub align_items: u8,
     pub justify_content: u8,
     pub align_self: u8,
+}
+
+impl Default for NativeSceneStyle {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            height: 0.0,
+            min_width: 0.0,
+            min_height: 0.0,
+            max_width: 0.0,
+            max_height: 0.0,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: 0.0,
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+            margin_top: 0.0,
+            margin_right: 0.0,
+            margin_bottom: 0.0,
+            margin_left: 0.0,
+            padding_top: 0.0,
+            padding_right: 0.0,
+            padding_bottom: 0.0,
+            padding_left: 0.0,
+            margin_all: 0.0,
+            margin_horizontal: 0.0,
+            margin_vertical: 0.0,
+            padding_all: 0.0,
+            padding_horizontal: 0.0,
+            padding_vertical: 0.0,
+            gap_all: 0.0,
+            gap_row: 0.0,
+            gap_column: 0.0,
+            border_top: 0.0,
+            border_right: 0.0,
+            border_bottom: 0.0,
+            border_left: 0.0,
+            width_unit: 3,
+            height_unit: 3,
+            min_width_unit: 3,
+            min_height_unit: 3,
+            max_width_unit: 3,
+            max_height_unit: 3,
+            flex_basis_unit: 3,
+            left_unit: 3,
+            right_unit: 3,
+            top_unit: 3,
+            bottom_unit: 3,
+            margin_top_unit: 3,
+            margin_right_unit: 3,
+            margin_bottom_unit: 3,
+            margin_left_unit: 3,
+            padding_top_unit: 3,
+            padding_right_unit: 3,
+            padding_bottom_unit: 3,
+            padding_left_unit: 3,
+            margin_all_unit: 3,
+            margin_horizontal_unit: 3,
+            margin_vertical_unit: 3,
+            padding_all_unit: 3,
+            padding_horizontal_unit: 3,
+            padding_vertical_unit: 3,
+            gap_all_unit: 3,
+            gap_row_unit: 3,
+            gap_column_unit: 3,
+            display: 0,
+            flex_direction: 0,
+            position_type: 0,
+            overflow: 0,
+            flex_wrap: 0,
+            align_items: 4,
+            justify_content: 0,
+            align_self: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -527,6 +604,53 @@ mod tests {
         assert!(root_layout.height >= 0.0);
 
         assert!(destroySceneNode(child));
+        assert!(destroySceneNode(root));
+    }
+
+    #[test]
+    fn scene_graph_applies_column_gap_layout() {
+        let root = createSceneNode();
+        let first = createSceneNode();
+        let second = createSceneNode();
+
+        let root_style = NativeSceneStyle {
+            width: 30.0,
+            height: 10.0,
+            width_unit: 0,
+            height_unit: 0,
+            flex_direction: 2,
+            gap_all: 2.0,
+            gap_all_unit: 0,
+            ..NativeSceneStyle::default()
+        };
+        let child_style = NativeSceneStyle {
+            width: 5.0,
+            height: 2.0,
+            width_unit: 0,
+            height_unit: 0,
+            ..NativeSceneStyle::default()
+        };
+        let second_style = NativeSceneStyle {
+            width: 7.0,
+            height: 2.0,
+            width_unit: 0,
+            height_unit: 0,
+            ..NativeSceneStyle::default()
+        };
+
+        assert!(sceneNodeSetStyle(root, &root_style));
+        assert!(sceneNodeSetStyle(first, &child_style));
+        assert!(sceneNodeSetStyle(second, &second_style));
+        assert!(sceneNodeAppendChild(root, first));
+        assert!(sceneNodeAppendChild(root, second));
+        assert!(sceneNodeCalculateLayout(root, 30.0, 10.0));
+
+        let mut second_layout = NativeSceneLayout::default();
+        assert!(sceneNodeGetLayout(second, &mut second_layout));
+        assert_eq!(second_layout.left, 7.0);
+
+        assert!(destroySceneNode(second));
+        assert!(destroySceneNode(first));
         assert!(destroySceneNode(root));
     }
 }

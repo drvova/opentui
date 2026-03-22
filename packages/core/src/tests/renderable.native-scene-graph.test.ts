@@ -51,6 +51,7 @@ test("native scene graph matches Yoga layout for spacing and border styles", asy
     height: 10,
     border: true,
     padding: 1,
+    gap: 2,
     flexDirection: "row",
   })
   const first = new BoxRenderable(renderer, { width: 5, height: 2 })
@@ -78,6 +79,8 @@ test("native scene graph matches Yoga layout for wrap and alignment styles", asy
     flexWrap: "wrap",
     justifyContent: "space-between",
     alignItems: "center",
+    rowGap: 1,
+    columnGap: 1,
   })
   const first = new BoxRenderable(renderer, { width: 5, height: 2 })
   const second = new BoxRenderable(renderer, { width: 5, height: 2 })

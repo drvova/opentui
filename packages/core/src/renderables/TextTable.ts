@@ -435,6 +435,7 @@ export class TextTableRenderable extends Renderable {
     }
 
     this.yogaNode.setMeasureFunc(measureFunc)
+    this.markUsesYogaMeasureFunc()
   }
 
   private rebuildCells(): void {
