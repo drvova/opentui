@@ -358,7 +358,6 @@ export abstract class Renderable extends BaseRenderable {
   protected usesYogaMeasureFunc: boolean = false
   protected blocksNativeSceneLayout: boolean = false
 
-  private renderableMapById: Map<string, Renderable> = new Map()
   protected _childrenInLayoutOrder: Renderable[] = []
   protected _childrenInZIndexOrder: Renderable[] = []
   private needsZIndexSort: boolean = false
@@ -420,10 +419,6 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   public override set id(value: string) {
-    if (this.parent) {
-      this.parent.renderableMapById.delete(this.id)
-      this.parent.renderableMapById.set(value, this)
-    }
     super.id = value
   }
 
@@ -1464,7 +1459,6 @@ export abstract class Renderable extends BaseRenderable {
       }
     } else {
       this.replaceParent(renderable)
-      this.renderableMapById.set(renderable.id, renderable)
 
       if (typeof renderable.onLifecyclePass === "function") {
         this._ctx.registerLifecyclePass(renderable)
@@ -1555,7 +1549,6 @@ export abstract class Renderable extends BaseRenderable {
       this._childrenInLayoutOrder.splice(this._childrenInLayoutOrder.indexOf(renderable), 1)
     } else {
       this.replaceParent(renderable)
-      this.renderableMapById.set(renderable.id, renderable)
 
       if (typeof renderable.onLifecyclePass === "function") {
         this._ctx.registerLifecyclePass(renderable)
@@ -1615,7 +1608,6 @@ export abstract class Renderable extends BaseRenderable {
       obj.onRemove()
       obj.parent = null
       this._ctx.unregisterLifecyclePass(obj)
-      this.renderableMapById.delete(id)
 
       if (!this.syncLayoutOrderCacheFromNative()) {
         const index = this._childrenInLayoutOrder.findIndex((obj) => obj.id === id)
@@ -1786,7 +1778,6 @@ export abstract class Renderable extends BaseRenderable {
 
     this._childrenInLayoutOrder = []
     this._childrenInZIndexOrder = []
-    this.renderableMapById.clear()
     Renderable.renderablesByNumber.delete(this.num)
 
     this.blur()
