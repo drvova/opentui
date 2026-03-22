@@ -36,6 +36,7 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
     sceneNodeGetChildCount: { args: ["u64"], returns: "usize" },
     sceneNodeGetChildren: { args: ["u64", "ptr", "usize"], returns: "usize" },
     sceneNodeGetChildrenByZIndex: { args: ["u64", "ptr", "usize"], returns: "usize" },
+    sceneNodeBuildRenderPlan: { args: ["u64", "ptr", "usize"], returns: "usize" },
   }).symbols
 
   const root = lib.createSceneNode()
@@ -60,6 +61,10 @@ runRustSceneGraphSmoke("Rust scene graph APIs support node lifecycle and layout"
   const zIndexBuffer = new BigUint64Array(2)
   expect(Number(lib.sceneNodeGetChildrenByZIndex(root, ptr(zIndexBuffer.buffer), 2))).toBe(2)
   expect(Array.from(zIndexBuffer)).toEqual([second, first])
+
+  const renderPlanBuffer = new ArrayBuffer(4 * 40)
+  const renderPlanCount = Number(lib.sceneNodeBuildRenderPlan(root, ptr(renderPlanBuffer), 4))
+  expect(renderPlanCount).toBeGreaterThan(0)
   expect(lib.sceneNodeCalculateLayout(root, 120, 40)).toBe(true)
 
   const layoutBuffer = new ArrayBuffer(SceneLayoutStruct.size)

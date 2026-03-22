@@ -58,6 +58,9 @@ pub struct NativeSceneStyle {
     pub border_bottom: f32,
     pub border_left: f32,
     pub z_index: f32,
+    pub opacity: f32,
+    pub translate_x: f32,
+    pub translate_y: f32,
     pub width_unit: u8,
     pub height_unit: u8,
     pub min_width_unit: u8,
@@ -94,6 +97,11 @@ pub struct NativeSceneStyle {
     pub align_items: u8,
     pub justify_content: u8,
     pub align_self: u8,
+    pub buffered: bool,
+    pub reserved0: u8,
+    pub reserved1: u8,
+    pub reserved2: u8,
+    pub renderable_num: u32,
 }
 
 #[repr(C)]
@@ -109,6 +117,23 @@ pub struct NativeTextTableMeasureConfig {
     pub outer_border: bool,
     pub clamp_at_most: bool,
     pub reserved: u8,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeSceneRenderCommand {
+    pub kind: u8,
+    pub reserved0: u8,
+    pub reserved1: u8,
+    pub reserved2: u8,
+    pub renderable_num: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub screen_x: i32,
+    pub screen_y: i32,
+    pub opacity: f32,
 }
 
 impl Default for NativeSceneStyle {
@@ -149,6 +174,9 @@ impl Default for NativeSceneStyle {
             border_bottom: 0.0,
             border_left: 0.0,
             z_index: 0.0,
+            opacity: 1.0,
+            translate_x: 0.0,
+            translate_y: 0.0,
             width_unit: 3,
             height_unit: 3,
             min_width_unit: 3,
@@ -185,6 +213,11 @@ impl Default for NativeSceneStyle {
             align_items: 4,
             justify_content: 0,
             align_self: 0,
+            buffered: false,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0,
+            renderable_num: 0,
         }
     }
 }
@@ -196,6 +229,13 @@ struct SceneNode {
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
     z_index: f32,
+    opacity: f32,
+    translate_x: f32,
+    translate_y: f32,
+    buffered: bool,
+    renderable_num: u32,
+    display: u8,
+    overflow: u8,
 }
 
 unsafe impl Send for SceneNode {}
@@ -254,6 +294,13 @@ impl SceneGraph {
                 children: Vec::new(),
                 measure: None,
                 z_index: 0.0,
+                opacity: 1.0,
+                translate_x: 0.0,
+                translate_y: 0.0,
+                buffered: false,
+                renderable_num: 0,
+                display: 0,
+                overflow: 0,
             }),
         );
         if let Some(node) = self.nodes.get_mut(&id) {
@@ -343,6 +390,13 @@ impl SceneGraph {
         };
         apply_style(&mut node.yoga, style);
         node.z_index = style.z_index;
+        node.opacity = style.opacity;
+        node.translate_x = style.translate_x;
+        node.translate_y = style.translate_y;
+        node.buffered = style.buffered;
+        node.renderable_num = style.renderable_num;
+        node.display = style.display;
+        node.overflow = style.overflow;
         true
     }
 
@@ -473,6 +527,110 @@ impl SceneGraph {
             az.partial_cmp(&bz).unwrap_or(std::cmp::Ordering::Equal)
         });
         Some(ordered)
+    }
+
+    fn build_render_plan(&self, root: u64, out: &mut Vec<NativeSceneRenderCommand>) -> bool {
+        let Some(root_node) = self.nodes.get(&root) else {
+            return false;
+        };
+
+        for child in self.child_handles_by_z_index(root).unwrap_or_else(|| root_node.children.clone()) {
+            self.build_render_plan_for_node(child, 0, 0, out);
+        }
+        true
+    }
+
+    fn build_render_plan_for_node(
+        &self,
+        id: u64,
+        parent_x: i32,
+        parent_y: i32,
+        out: &mut Vec<NativeSceneRenderCommand>,
+    ) {
+        let Some(node) = self.nodes.get(&id) else {
+            return;
+        };
+        if node.display == 1 {
+            return;
+        }
+
+        let x = parent_x + node.yoga.get_layout_left() as i32 + node.translate_x as i32;
+        let y = parent_y + node.yoga.get_layout_top() as i32 + node.translate_y as i32;
+        let width = node.yoga.get_layout_width().max(0.0) as u32;
+        let height = node.yoga.get_layout_height().max(0.0) as u32;
+
+        if node.opacity < 1.0 {
+            out.push(NativeSceneRenderCommand {
+                kind: 3,
+                opacity: node.opacity,
+                ..NativeSceneRenderCommand::default()
+            });
+        }
+
+        out.push(NativeSceneRenderCommand {
+            kind: 0,
+            renderable_num: node.renderable_num,
+            ..NativeSceneRenderCommand::default()
+        });
+
+        if node.overflow != 0 && width > 0 && height > 0 {
+            let left_inset = if node.yoga.get_layout_border_left() > 0.0 {
+                1
+            } else {
+                0
+            };
+            let right_inset = if node.yoga.get_layout_border_right() > 0.0 {
+                1
+            } else {
+                0
+            };
+            let top_inset = if node.yoga.get_layout_border_top() > 0.0 {
+                1
+            } else {
+                0
+            };
+            let bottom_inset = if node.yoga.get_layout_border_bottom() > 0.0 {
+                1
+            } else {
+                0
+            };
+
+            let scissor_x = if node.buffered { left_inset } else { x + left_inset };
+            let scissor_y = if node.buffered { top_inset } else { y + top_inset };
+            let scissor_width =
+                width.saturating_sub((left_inset as u32).saturating_add(right_inset as u32));
+            let scissor_height =
+                height.saturating_sub((top_inset as u32).saturating_add(bottom_inset as u32));
+
+            out.push(NativeSceneRenderCommand {
+                kind: 1,
+                x: scissor_x,
+                y: scissor_y,
+                width: scissor_width,
+                height: scissor_height,
+                screen_x: x,
+                screen_y: y,
+                ..NativeSceneRenderCommand::default()
+            });
+        }
+
+        for child in self.child_handles_by_z_index(id).unwrap_or_else(|| node.children.clone()) {
+            self.build_render_plan_for_node(child, x, y, out);
+        }
+
+        if node.overflow != 0 && width > 0 && height > 0 {
+            out.push(NativeSceneRenderCommand {
+                kind: 2,
+                ..NativeSceneRenderCommand::default()
+            });
+        }
+
+        if node.opacity < 1.0 {
+            out.push(NativeSceneRenderCommand {
+                kind: 4,
+                ..NativeSceneRenderCommand::default()
+            });
+        }
     }
 
     fn insert_child(&mut self, parent: u64, child: u64, index: usize) -> bool {
@@ -1444,13 +1602,41 @@ pub extern "C" fn sceneNodeGetChildrenByZIndex(id: u64, out_ptr: *mut u64, max_c
     count
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeBuildRenderPlan(
+    id: u64,
+    out_ptr: *mut NativeSceneRenderCommand,
+    max_count: usize,
+) -> usize {
+    if out_ptr.is_null() || max_count == 0 {
+        return 0;
+    }
+
+    let mut commands = Vec::new();
+    {
+        let graph = scene_graph().lock().unwrap();
+        if !graph.build_render_plan(id, &mut commands) {
+            return 0;
+        }
+    }
+
+    let count = commands.len().min(max_count);
+    for (index, command) in commands.iter().take(count).enumerate() {
+        unsafe {
+            std::ptr::write_unaligned(out_ptr.add(index), *command);
+        }
+    }
+
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use super::{NativeSceneLayout, NativeSceneStyle, createSceneNode, destroySceneNode, sceneNodeAppendChild, sceneNodeCalculateLayout, sceneNodeGetChildCount, sceneNodeGetLayout, sceneNodeSetStyle};
 
     #[test]
     fn native_scene_style_abi_size_is_stable() {
-        assert_eq!(std::mem::size_of::<NativeSceneStyle>(), 176);
+        assert_eq!(std::mem::size_of::<NativeSceneStyle>(), 196);
     }
 
     #[test]

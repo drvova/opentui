@@ -174,6 +174,21 @@ export const TextTableMeasureConfigStruct = defineStruct([
   ["reserved", "u8", { default: 0 }],
 ])
 
+export const SceneRenderCommandStruct = defineStruct([
+  ["kind", "u8", { default: 0 }],
+  ["reserved0", "u8", { default: 0 }],
+  ["reserved1", "u8", { default: 0 }],
+  ["reserved2", "u8", { default: 0 }],
+  ["renderableNum", "u32", { default: 0 }],
+  ["x", "i32", { default: 0 }],
+  ["y", "i32", { default: 0 }],
+  ["width", "u32", { default: 0 }],
+  ["height", "u32", { default: 0 }],
+  ["screenX", "i32", { default: 0 }],
+  ["screenY", "i32", { default: 0 }],
+  ["opacity", "f32", { default: 1 }],
+])
+
 export const SceneStyleStruct = defineStruct([
   ["width", "f32", { default: 0 }],
   ["height", "f32", { default: 0 }],
@@ -210,6 +225,9 @@ export const SceneStyleStruct = defineStruct([
   ["borderBottom", "f32", { default: 0 }],
   ["borderLeft", "f32", { default: 0 }],
   ["zIndex", "f32", { default: 0 }],
+  ["opacity", "f32", { default: 1 }],
+  ["translateX", "f32", { default: 0 }],
+  ["translateY", "f32", { default: 0 }],
   ["widthUnit", "u8", { default: 3 }],
   ["heightUnit", "u8", { default: 3 }],
   ["minWidthUnit", "u8", { default: 3 }],
@@ -246,6 +264,11 @@ export const SceneStyleStruct = defineStruct([
   ["alignItems", "u8", { default: 4 }],
   ["justifyContent", "u8", { default: 0 }],
   ["alignSelf", "u8", { default: 0 }],
+  ["buffered", "bool_u8", { default: false }],
+  ["reserved0", "u8", { default: 0 }],
+  ["reserved1", "u8", { default: 0 }],
+  ["reserved2", "u8", { default: 0 }],
+  ["renderableNum", "u32", { default: 0 }],
 ])
 
 export type BuildOptions = {

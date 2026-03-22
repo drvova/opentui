@@ -707,6 +707,9 @@ export abstract class Renderable extends BaseRenderable {
       borderBottom: node.getBorder(Edge.Bottom) ?? 0,
       borderLeft: node.getBorder(Edge.Left) ?? 0,
       zIndex: this._zIndex,
+      opacity: this._opacity,
+      translateX: this._translateX,
+      translateY: this._translateY,
       marginAllUnit: marginAll.unit,
       marginHorizontalUnit: marginHorizontal.unit,
       marginVerticalUnit: marginVertical.unit,
@@ -720,6 +723,8 @@ export abstract class Renderable extends BaseRenderable {
       alignItems: alignKind(node.getAlignItems()),
       justifyContent: justifyKind(node.getJustifyContent()),
       alignSelf: alignKind(node.getAlignSelf()),
+      buffered: this.buffered,
+      renderableNum: this.num,
     }
 
     try {
@@ -1715,6 +1720,30 @@ export abstract class Renderable extends BaseRenderable {
     }
   }
 
+  protected syncLayoutState(deltaTime: number): void {
+    if (!this.visible) return
+
+    this.onUpdate(deltaTime)
+    if (this._isDestroyed) return
+
+    this.updateFromLayout()
+
+    if (this._shouldUpdateBefore.size > 0) {
+      for (const child of this._shouldUpdateBefore) {
+        if (!child.isDestroyed) {
+          child.updateFromLayout()
+        }
+      }
+      this._shouldUpdateBefore.clear()
+    }
+
+    if (this._isDestroyed) return
+
+    for (const child of this.getChildren()) {
+      child.syncLayoutState(deltaTime)
+    }
+  }
+
   public render(buffer: OptimizedBuffer, deltaTime: number): void {
     let renderBuffer = buffer
     if (this.buffered && this.frameBuffer) {
@@ -1741,6 +1770,20 @@ export abstract class Renderable extends BaseRenderable {
 
   protected _getVisibleChildren(): number[] {
     return this._childrenInZIndexOrder.map((child) => child.num)
+  }
+
+  protected subtreeUsesCustomVisibleChildFiltering(): boolean {
+    if (this._getVisibleChildren !== Renderable.prototype._getVisibleChildren) {
+      return true
+    }
+
+    for (const child of this.getChildren()) {
+      if (child.subtreeUsesCustomVisibleChildFiltering()) {
+        return true
+      }
+    }
+
+    return false
   }
 
   protected onUpdate(deltaTime: number): void {
@@ -1961,9 +2004,18 @@ export type RenderCommand =
   | RenderCommandPushOpacity
   | RenderCommandPopOpacity
 
+enum NativeRenderCommandKind {
+  Render = 0,
+  PushScissorRect = 1,
+  PopScissorRect = 2,
+  PushOpacity = 3,
+  PopOpacity = 4,
+}
+
 export class RootRenderable extends Renderable {
   private renderList: RenderCommand[] = []
   private nativeSceneLayoutActive: boolean = false
+  private nativeRenderPlanActive: boolean = false
 
   constructor(ctx: RenderContext) {
     super(ctx, { id: "__root__", zIndex: 0, visible: true, width: ctx.width, height: ctx.height, enableLayout: true })
@@ -1999,6 +2051,12 @@ export class RootRenderable extends Renderable {
     // 1. Calculate layout from root
     if (this.yogaNode.isDirty()) {
       this.calculateLayout()
+    }
+
+    if (this.nativeRenderPlanActive && this.sceneNodeHandle != null) {
+      this.syncLayoutState(deltaTime)
+      this.executeNativeRenderPlan(buffer, deltaTime)
+      return
     }
 
     // 2. Update layout throughout the tree and collect render list
@@ -2047,6 +2105,7 @@ export class RootRenderable extends Renderable {
 
   public calculateLayout(): void {
     this.nativeSceneLayoutActive = !this.subtreeUsesYogaMeasureFunc()
+    this.nativeRenderPlanActive = this.nativeSceneLayoutActive && !this.subtreeUsesCustomVisibleChildFiltering()
 
     if (this.nativeSceneLayoutActive && this.sceneNodeHandle != null) {
       this._ctx.sceneNodeCalculateLayout(this.sceneNodeHandle, this.width, this.height)
@@ -2057,6 +2116,41 @@ export class RootRenderable extends Renderable {
 
   public isNativeSceneLayoutActive(): boolean {
     return this.nativeSceneLayoutActive
+  }
+
+  private executeNativeRenderPlan(buffer: OptimizedBuffer, deltaTime: number): void {
+    if (this.sceneNodeHandle == null) {
+      return
+    }
+
+    const commands = this._ctx.sceneNodeBuildRenderPlan(this.sceneNodeHandle)
+    this._ctx.clearHitGridScissorRects()
+
+    for (const command of commands) {
+      switch (command.kind) {
+        case NativeRenderCommandKind.Render: {
+          const renderable = Renderable.renderablesByNumber.get(command.renderableNum)
+          if (renderable && !renderable.isDestroyed) {
+            renderable.render(buffer, deltaTime)
+          }
+          break
+        }
+        case NativeRenderCommandKind.PushScissorRect:
+          buffer.pushScissorRect(command.x, command.y, command.width, command.height)
+          this._ctx.pushHitGridScissorRect(command.screenX, command.screenY, command.width, command.height)
+          break
+        case NativeRenderCommandKind.PopScissorRect:
+          buffer.popScissorRect()
+          this._ctx.popHitGridScissorRect()
+          break
+        case NativeRenderCommandKind.PushOpacity:
+          buffer.pushOpacity(command.opacity)
+          break
+        case NativeRenderCommandKind.PopOpacity:
+          buffer.popOpacity()
+          break
+      }
+    }
   }
 
   public resize(width: number, height: number): void {

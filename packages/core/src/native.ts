@@ -30,6 +30,7 @@ import {
   CursorStyleOptionsStruct,
   GridDrawOptionsStruct,
   SceneLayoutStruct,
+  SceneRenderCommandStruct,
   SceneStyleStruct,
   TextTableMeasureConfigStruct,
   NativeSpanFeedOptionsStruct,
@@ -233,6 +234,10 @@ function getOpenTUILib(libPath?: string) {
       returns: "usize",
     },
     sceneNodeGetChildren: {
+      args: ["u64", "ptr", "usize"],
+      returns: "usize",
+    },
+    sceneNodeBuildRenderPlan: {
       args: ["u64", "ptr", "usize"],
       returns: "usize",
     },
@@ -884,6 +889,17 @@ export interface RenderLib {
   sceneNodeGetChildCount: (handle: bigint | number) => number
   sceneNodeGetChildren: (handle: bigint | number) => Array<bigint | number>
   sceneNodeGetChildrenByZIndex: (handle: bigint | number) => Array<bigint | number>
+  sceneNodeBuildRenderPlan: (handle: bigint | number) => Array<{
+    kind: number
+    renderableNum: number
+    x: number
+    y: number
+    width: number
+    height: number
+    screenX: number
+    screenY: number
+    opacity: number
+  }>
   startNativeInputLoop: (renderer: Pointer) => void
   stopNativeInputLoop: (renderer: Pointer) => void
   pumpNativeInputEvents: (renderer: Pointer) => void
@@ -2019,6 +2035,24 @@ class FFIRenderLib implements RenderLib {
     const resolvedCount = toNumber(this.opentui.symbols.sceneNodeGetChildrenByZIndex(handle, ptr(buffer), count))
     const raw = new BigUint64Array(buffer)
     return Array.from(raw.slice(0, resolvedCount))
+  }
+
+  public sceneNodeBuildRenderPlan(handle: bigint | number): Array<{
+    kind: number
+    renderableNum: number
+    x: number
+    y: number
+    width: number
+    height: number
+    screenX: number
+    screenY: number
+    opacity: number
+  }> {
+    const childCount = this.sceneNodeGetChildCount(handle)
+    const maxCommands = Math.max(1, childCount * 8 + 8)
+    const buffer = new ArrayBuffer(maxCommands * SceneRenderCommandStruct.size)
+    const count = toNumber(this.opentui.symbols.sceneNodeBuildRenderPlan(handle, ptr(buffer), maxCommands))
+    return SceneRenderCommandStruct.unpackList(buffer, count) as any
   }
 
   public startNativeInputLoop(renderer: Pointer): void {
