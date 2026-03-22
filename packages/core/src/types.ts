@@ -113,6 +113,15 @@ export interface RenderContext extends EventEmitter {
   sceneNodeDrawTextBufferView: (handle: bigint | number, buffer: unknown, x: number, y: number) => boolean
   sceneNodeSetEditorViewDraw: (handle: bigint | number, view: unknown) => boolean
   sceneNodeDrawEditorView: (handle: bigint | number, buffer: unknown, x: number, y: number) => boolean
+  sceneNodeSetLineNumberDraw: (handle: bigint | number, fg: RGBA, bg: RGBA) => boolean
+  sceneNodeDrawLineNumberView: (
+    handle: bigint | number,
+    buffer: unknown,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number

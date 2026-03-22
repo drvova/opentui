@@ -3,6 +3,7 @@ import { expect, test } from "bun:test"
 import { OptimizedBuffer } from "../buffer.js"
 import { BoxRenderable } from "../renderables/Box.js"
 import { CodeRenderable } from "../renderables/Code.js"
+import { LineNumberRenderable } from "../renderables/LineNumberRenderable.js"
 import { TextRenderable } from "../renderables/Text.js"
 import { TextareaRenderable } from "../renderables/Textarea.js"
 import { RGBA } from "../lib/RGBA.js"
@@ -301,6 +302,31 @@ test("scene graph can draw a plain TextareaRenderable directly through the nativ
 
   const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
   expect(frame).toContain("hello")
+
+  buffer.destroy()
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain LineNumber gutter directly through the native path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const text = new TextRenderable(renderer, {
+    width: 10,
+    content: "one\ntwo",
+  })
+  const lineNumbers = new LineNumberRenderable(renderer, {})
+  renderer.root.add(lineNumbers)
+  lineNumbers.add(text)
+  await renderOnce()
+
+  const gutter = lineNumbers.getChildren()[0]
+  const buffer = OptimizedBuffer.create(8, 4, renderer.widthMethod)
+  expect(renderer.sceneNodeDrawLineNumberView((gutter as any).sceneNodeHandle, buffer.ptr, 0, 0, gutter.width, gutter.height)).toBe(
+    true,
+  )
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("1")
 
   buffer.destroy()
   renderer.destroy()

@@ -246,6 +246,7 @@ struct SceneNode {
     measure: Option<SceneMeasure>,
     box_draw: Option<SceneBoxDraw>,
     editor_view: Option<*mut NativeEditorView>,
+    line_number_draw: Option<SceneLineNumberDraw>,
     visible_children: Option<Vec<u64>>,
     z_index: f32,
     opacity: f32,
@@ -306,6 +307,12 @@ struct SceneBoxDraw {
     title: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct SceneLineNumberDraw {
+    fg: [f32; 4],
+    bg: [f32; 4],
+}
+
 #[derive(Debug, Default)]
 struct SceneGraph {
     nodes: HashMap<u64, Box<SceneNode>>,
@@ -323,6 +330,7 @@ impl SceneGraph {
                 measure: None,
                 box_draw: None,
                 editor_view: None,
+                line_number_draw: None,
                 visible_children: None,
                 z_index: 0.0,
                 opacity: 1.0,
@@ -652,6 +660,90 @@ impl SceneGraph {
         }
 
         crate::draw_editor_view(buffer, unsafe { &*view }, x, y);
+        true
+    }
+
+    fn set_line_number_draw(&mut self, id: u64, fg: [f32; 4], bg: [f32; 4]) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        node.line_number_draw = Some(SceneLineNumberDraw { fg, bg });
+        true
+    }
+
+    fn draw_line_number_view(
+        &self,
+        id: u64,
+        buffer: &mut OptimizedBuffer,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let Some(SceneMeasure::LineNumber {
+            view,
+            padding_right,
+            line_number_offset,
+            ..
+        }) = node.measure.as_ref()
+        else {
+            return false;
+        };
+        let Some(draw) = node.line_number_draw else {
+            return false;
+        };
+        if view.is_null() {
+            return false;
+        }
+
+        let view = unsafe { &mut **view };
+        let visible_lines = view.visible_lines();
+        if width == 0 || height == 0 {
+            buffer.fill_rect(x.max(0) as usize, y.max(0) as usize, width as usize, height as usize, draw.bg);
+            return true;
+        }
+
+        buffer.fill_rect(x.max(0) as usize, y.max(0) as usize, width as usize, height as usize, draw.bg);
+
+        let mut last_source = if visible_lines
+            .first()
+            .is_some_and(|line| line.source_col_start > 0)
+        {
+            i32::try_from(visible_lines.first().map(|line| line.source_line).unwrap_or(0)).unwrap_or(-1)
+        } else {
+            -1
+        };
+
+        for line in visible_lines.iter().take(usize::try_from(height).unwrap_or(0)) {
+            let row = i32::try_from(line.viewport_row).unwrap_or(0);
+            let logical_line = i32::try_from(line.source_line).unwrap_or(-1);
+            if logical_line == last_source {
+                continue;
+            }
+
+            let line_num = logical_line + 1 + *line_number_offset;
+            let line_num_str = line_num.to_string();
+            let line_num_width = u32::try_from(line_num_str.chars().count()).unwrap_or(0);
+            let draw_x = x
+                + i32::try_from(width.saturating_sub(*padding_right).saturating_sub(line_num_width)).unwrap_or(0);
+
+            if draw_x >= x + 1 {
+                let _ = buffer.draw_text(
+                    usize::try_from(draw_x.max(0)).unwrap_or(0),
+                    usize::try_from((y + row).max(0)).unwrap_or(0),
+                    &line_num_str,
+                    draw.fg,
+                    draw.bg,
+                    0,
+                );
+            }
+
+            last_source = logical_line;
+        }
+
         true
     }
 
@@ -1824,6 +1916,41 @@ pub extern "C" fn sceneNodeDrawEditorView(
 
     let buffer = unsafe { &mut *buffer };
     scene_graph().lock().unwrap().draw_editor_view(id, buffer, x, y)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetLineNumberDraw(
+    id: u64,
+    fg_ptr: *const f32,
+    bg_ptr: *const f32,
+) -> bool {
+    if fg_ptr.is_null() || bg_ptr.is_null() {
+        return false;
+    }
+
+    let fg = unsafe { std::ptr::read_unaligned(fg_ptr.cast::<[f32; 4]>()) };
+    let bg = unsafe { std::ptr::read_unaligned(bg_ptr.cast::<[f32; 4]>()) };
+    scene_graph().lock().unwrap().set_line_number_draw(id, fg, bg)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeDrawLineNumberView(
+    id: u64,
+    buffer: *mut OptimizedBuffer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    scene_graph()
+        .lock()
+        .unwrap()
+        .draw_line_number_view(id, buffer, x, y, width, height)
 }
 
 #[unsafe(no_mangle)]

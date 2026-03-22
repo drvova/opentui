@@ -88,6 +88,7 @@ class GutterRenderable extends Renderable {
     this._lastKnownScrollY = this.target.scrollY
     this.calculateSignWidths()
     this.setupMeasureFunc()
+    this.syncNativeDrawRegistration()
 
     // Use lifecycle pass to detect line count changes BEFORE layout
     this.onLifecyclePass = () => {
@@ -166,9 +167,15 @@ class GutterRenderable extends Renderable {
     )
   }
 
+  private syncNativeDrawRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+    this._ctx.sceneNodeSetLineNumberDraw(this.sceneNodeHandle, this._fg, this._bg)
+  }
+
   public override requestRender(): void {
     if (this.isDestroyed) return
     this.syncNativeMeasureRegistration()
+    this.syncNativeDrawRegistration()
     super.requestRender()
   }
 
@@ -362,6 +369,53 @@ class GutterRenderable extends Renderable {
 
       lastSource = logicalLine
     }
+  }
+
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    if (
+      this.sceneNodeHandle == null ||
+      this._lineColorsGutter.size > 0 ||
+      this._lineColorsContent.size > 0 ||
+      this._lineSigns.size > 0 ||
+      this._hideLineNumbers.size > 0 ||
+      this._lineNumbers.size > 0 ||
+      this.renderSelf !== GutterRenderable.prototype.renderSelf
+    ) {
+      return false
+    }
+
+    const targetBuffer = this.buffered ? this.frameBuffer : buffer
+    if (!targetBuffer) {
+      return false
+    }
+
+    if (this.buffered && this.frameBuffer) {
+      targetBuffer.clear(this._bg)
+    }
+
+    const drawX = this.buffered ? 0 : command.x
+    const drawY = this.buffered ? 0 : command.y
+    const drawn = this._ctx.sceneNodeDrawLineNumberView(
+      this.sceneNodeHandle,
+      targetBuffer.ptr,
+      drawX,
+      drawY,
+      command.width,
+      command.height,
+    )
+    if (!drawn) {
+      return false
+    }
+
+    this._lastKnownScrollY = this.target.scrollY
+    this.markClean()
+    if (this.buffered && this.frameBuffer) {
+      buffer.drawFrameBuffer(command.x, command.y, this.frameBuffer)
+    }
+    return true
   }
 }
 

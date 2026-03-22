@@ -241,6 +241,14 @@ function getOpenTUILib(libPath?: string) {
       args: ["u64", "ptr", "i32", "i32"],
       returns: "bool",
     },
+    sceneNodeSetLineNumberDraw: {
+      args: ["u64", "ptr", "ptr"],
+      returns: "bool",
+    },
+    sceneNodeDrawLineNumberView: {
+      args: ["u64", "ptr", "i32", "i32", "u32", "u32"],
+      returns: "bool",
+    },
     sceneNodeCalculateLayout: {
       args: ["u64", "f32", "f32"],
       returns: "bool",
@@ -936,6 +944,15 @@ export interface RenderLib {
   sceneNodeDrawTextBufferView: (handle: bigint | number, buffer: Pointer, x: number, y: number) => boolean
   sceneNodeSetEditorViewDraw: (handle: bigint | number, view: Pointer) => boolean
   sceneNodeDrawEditorView: (handle: bigint | number, buffer: Pointer, x: number, y: number) => boolean
+  sceneNodeSetLineNumberDraw: (handle: bigint | number, fg: RGBA, bg: RGBA) => boolean
+  sceneNodeDrawLineNumberView: (
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => boolean
   sceneNodeCalculateLayout: (root: bigint | number, width: number, height: number) => boolean
   sceneNodeGetLayout: (handle: bigint | number) => { left: number; top: number; width: number; height: number } | null
   sceneNodeGetChildCount: (handle: bigint | number) => number
@@ -2110,6 +2127,21 @@ class FFIRenderLib implements RenderLib {
 
   public sceneNodeDrawEditorView(handle: bigint | number, buffer: Pointer, x: number, y: number): boolean {
     return this.opentui.symbols.sceneNodeDrawEditorView(handle, buffer, x, y)
+  }
+
+  public sceneNodeSetLineNumberDraw(handle: bigint | number, fg: RGBA, bg: RGBA): boolean {
+    return this.opentui.symbols.sceneNodeSetLineNumberDraw(handle, fg.buffer, bg.buffer)
+  }
+
+  public sceneNodeDrawLineNumberView(
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): boolean {
+    return this.opentui.symbols.sceneNodeDrawLineNumberView(handle, buffer, x, y, width, height)
   }
 
   public sceneNodeCalculateLayout(root: bigint | number, width: number, height: number): boolean {
