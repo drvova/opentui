@@ -289,9 +289,16 @@ impl SceneGraph {
         let Some(parent_node) = self.nodes.get(&parent) else {
             return false;
         };
-        let Some(index) = parent_node.children.iter().position(|existing| *existing == anchor) else {
+        let Some(mut index) = parent_node.children.iter().position(|existing| *existing == anchor) else {
             return false;
         };
+        let old_parent = self.nodes.get(&child).and_then(|node| node.parent);
+        if old_parent == Some(parent)
+            && let Some(child_index) = parent_node.children.iter().position(|existing| *existing == child)
+            && child_index < index
+        {
+            index -= 1;
+        }
         self.insert_child(parent, child, index)
     }
 

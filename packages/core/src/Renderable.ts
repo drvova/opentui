@@ -870,16 +870,20 @@ export abstract class Renderable extends BaseRenderable {
   }
 
   private ensureZIndexSorted(): void {
-    if (this.needsZIndexSort) {
-      this._childrenInZIndexOrder.sort((a, b) => (a.zIndex > b.zIndex ? 1 : a.zIndex < b.zIndex ? -1 : 0))
+    const currentChildren = this.getChildren()
+    if (this.needsZIndexSort || this._childrenInZIndexOrder.length !== currentChildren.length) {
+      this._childrenInZIndexOrder = [...currentChildren].sort((a, b) =>
+        a.zIndex > b.zIndex ? 1 : a.zIndex < b.zIndex ? -1 : 0,
+      )
       this.needsZIndexSort = false
     }
   }
 
   public getChildrenSortedByPrimaryAxis(): Renderable[] {
+    const children = this.getChildren()
     if (
       !this.childrenPrimarySortDirty &&
-      this.childrenSortedByPrimaryAxis.length === this._childrenInLayoutOrder.length
+      this.childrenSortedByPrimaryAxis.length === children.length
     ) {
       return this.childrenSortedByPrimaryAxis
     }
@@ -887,7 +891,7 @@ export abstract class Renderable extends BaseRenderable {
     const dir = this.yogaNode.getFlexDirection()
     const axis: "x" | "y" = dir === 2 || dir === 3 ? "x" : "y"
 
-    const sorted = [...this._childrenInLayoutOrder]
+    const sorted = [...children]
     sorted.sort((a, b) => {
       const va = axis === "y" ? a.y : a.x
       const vb = axis === "y" ? b.y : b.x
@@ -1430,15 +1434,14 @@ export abstract class Renderable extends BaseRenderable {
       return -1
     }
 
-    const anchorRenderable = index !== undefined ? this._childrenInLayoutOrder[index] : undefined
-
-    if (anchorRenderable) {
-      return this.insertBefore(renderable, anchorRenderable)
-    }
-
+    let requestedIndex = index
     if (renderable.parent === this) {
+      const existingIndex = this._childrenInLayoutOrder.indexOf(renderable)
       this.yogaNode.removeChild(renderable.getLayoutNode())
-      this._childrenInLayoutOrder.splice(this._childrenInLayoutOrder.indexOf(renderable), 1)
+      this._childrenInLayoutOrder.splice(existingIndex, 1)
+      if (requestedIndex !== undefined && existingIndex !== -1 && existingIndex < requestedIndex) {
+        requestedIndex -= 1
+      }
     } else {
       this.replaceParent(renderable)
       this.needsZIndexSort = true
@@ -1455,11 +1458,19 @@ export abstract class Renderable extends BaseRenderable {
     }
 
     const childLayoutNode = renderable.getLayoutNode()
-    const insertedIndex = this._childrenInLayoutOrder.length
-    this._childrenInLayoutOrder.push(renderable)
+    const insertedIndex =
+      requestedIndex === undefined
+        ? this._childrenInLayoutOrder.length
+        : Math.max(0, Math.min(requestedIndex, this._childrenInLayoutOrder.length))
+    const anchorRenderable = this._childrenInLayoutOrder[insertedIndex]
+    this._childrenInLayoutOrder.splice(insertedIndex, 0, renderable)
     this.yogaNode.insertChild(childLayoutNode, insertedIndex)
     if (this.sceneNodeHandle != null && renderable.sceneNodeHandle != null) {
-      this._ctx.sceneNodeAppendChild(this.sceneNodeHandle, renderable.sceneNodeHandle)
+      if (anchorRenderable?.sceneNodeHandle != null) {
+        this._ctx.sceneNodeInsertBefore(this.sceneNodeHandle, renderable.sceneNodeHandle, anchorRenderable.sceneNodeHandle)
+      } else {
+        this._ctx.sceneNodeAppendChild(this.sceneNodeHandle, renderable.sceneNodeHandle)
+      }
     }
 
     this.childrenPrimarySortDirty = true
@@ -1747,7 +1758,7 @@ export abstract class Renderable extends BaseRenderable {
       this.frameBuffer = null
     }
 
-    for (const child of this._childrenInLayoutOrder) {
+    for (const child of this.getChildren()) {
       this.remove(child.id)
     }
 
