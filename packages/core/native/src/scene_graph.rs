@@ -5,7 +5,10 @@ use std::sync::{Mutex, OnceLock};
 use crate::{
     NativeEditorView,
     NativeTextBufferView,
-    optimized_buffer::{BorderSides as BufferBorderSides, OptimizedBuffer},
+    optimized_buffer::{
+        BorderSides as BufferBorderSides, GridDrawOptions as BufferGridDrawOptions,
+        OptimizedBuffer, Rgba,
+    },
 };
 use yoga::{
     Align, Context, Direction, Display, Edge, FlexDirection, Gutter, Justify, Layout, MeasureMode,
@@ -244,6 +247,7 @@ struct SceneNode {
     parent: Option<u64>,
     children: Vec<u64>,
     measure: Option<SceneMeasure>,
+    text_table_draw: Option<SceneTextTableDraw>,
     box_draw: Option<SceneBoxDraw>,
     editor_view: Option<*mut NativeEditorView>,
     line_number_draw: Option<SceneLineNumberDraw>,
@@ -299,6 +303,15 @@ struct TextTableMeasure {
 }
 
 #[derive(Clone, Debug)]
+struct SceneTextTableDraw {
+    border_chars: [u32; 11],
+    show_borders: bool,
+    border_color: Rgba,
+    border_background_color: Rgba,
+    background_color: Rgba,
+}
+
+#[derive(Clone, Debug)]
 struct SceneBoxDraw {
     border_chars: [u32; 11],
     packed_options: u32,
@@ -328,6 +341,7 @@ impl SceneGraph {
                 parent: None,
                 children: Vec::new(),
                 measure: None,
+                text_table_draw: None,
                 box_draw: None,
                 editor_view: None,
                 line_number_draw: None,
@@ -508,6 +522,34 @@ impl SceneGraph {
         true
     }
 
+    fn set_text_table_draw(
+        &mut self,
+        id: u64,
+        border_chars: &[u32],
+        show_borders: bool,
+        border_color: Rgba,
+        border_background_color: Rgba,
+        background_color: Rgba,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        if border_chars.len() < 11 {
+            return false;
+        }
+
+        let mut chars = [0_u32; 11];
+        chars.copy_from_slice(&border_chars[..11]);
+        node.text_table_draw = Some(SceneTextTableDraw {
+            border_chars: chars,
+            show_borders,
+            border_color,
+            border_background_color,
+            background_color,
+        });
+        true
+    }
+
     fn set_line_number_measure(
         &mut self,
         id: u64,
@@ -628,6 +670,113 @@ impl SceneGraph {
         }
 
         crate::draw_text_buffer_view(buffer, unsafe { &**view }, x, y);
+        true
+    }
+
+    fn draw_text_table(
+        &self,
+        id: u64,
+        buffer: &mut OptimizedBuffer,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&id) else {
+            return false;
+        };
+        let Some(SceneMeasure::TextTable(table)) = node.measure.as_ref() else {
+            return false;
+        };
+        let Some(draw) = node.text_table_draw.as_ref() else {
+            return false;
+        };
+
+        if x == 0
+            && y == 0
+            && width as usize == buffer.width()
+            && height as usize == buffer.height()
+        {
+            buffer.clear_with_bg(draw.background_color);
+        } else {
+            buffer.fill_rect(
+                x.max(0) as usize,
+                y.max(0) as usize,
+                width as usize,
+                height as usize,
+                draw.background_color,
+            );
+        }
+
+        if table.row_count == 0 || table.column_count == 0 {
+            return true;
+        }
+
+        let layout = compute_text_table_layout(table, Some(width));
+        let border_layout = resolve_table_border_layout(table);
+
+        if draw.show_borders
+            && (get_vertical_border_count(table, border_layout) > 0
+                || get_horizontal_border_count(table, border_layout) > 0)
+        {
+            buffer.draw_grid(
+                &layout.column_offsets,
+                &layout.row_offsets,
+                &draw.border_chars,
+                draw.border_color,
+                draw.border_background_color,
+                BufferGridDrawOptions {
+                    draw_inner: table.border,
+                    draw_outer: table.outer_border,
+                },
+            );
+        }
+
+        let horizontal_padding = get_horizontal_cell_padding(table);
+        let vertical_padding = get_vertical_cell_padding(table);
+        for row_idx in 0..table.row_count {
+            let cell_y = y
+                + layout.row_offsets.get(row_idx).copied().unwrap_or(0)
+                + 1
+                + i32::try_from(table.cell_padding).unwrap_or(0);
+            for col_idx in 0..table.column_count {
+                let Some(view_ptr) = cell_view_ptr(table, row_idx, col_idx) else {
+                    continue;
+                };
+
+                let view = unsafe { &mut *view_ptr };
+                let content_width = layout
+                    .column_widths
+                    .get(col_idx)
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(horizontal_padding)
+                    .max(1);
+                let content_height = layout
+                    .row_heights
+                    .get(row_idx)
+                    .copied()
+                    .unwrap_or(1)
+                    .saturating_sub(vertical_padding)
+                    .max(1);
+                if table.wrap_mode == 0 {
+                    view.set_wrap_width(0);
+                } else {
+                    view.set_wrap_width(content_width);
+                }
+                view.set_viewport(0, 0, content_width, content_height);
+
+                crate::draw_text_buffer_view(
+                    buffer,
+                    view,
+                    x + layout.column_offsets.get(col_idx).copied().unwrap_or(0)
+                        + 1
+                        + i32::try_from(table.cell_padding).unwrap_or(0),
+                    cell_y,
+                );
+            }
+        }
+
         true
     }
 
@@ -1135,6 +1284,10 @@ struct TableBorderLayout {
 struct TableMeasureLayout {
     table_width: u32,
     table_height: u32,
+    column_widths: Vec<u32>,
+    row_heights: Vec<u32>,
+    column_offsets: Vec<i32>,
+    row_offsets: Vec<i32>,
 }
 
 fn compute_text_table_layout(table: &TextTableMeasure, raw_width_constraint: Option<u32>) -> TableMeasureLayout {
@@ -1162,6 +1315,10 @@ fn compute_text_table_layout(table: &TextTableMeasure, raw_width_constraint: Opt
     TableMeasureLayout {
         table_width: column_offsets.last().copied().unwrap_or(0).saturating_add(1),
         table_height: row_offsets.last().copied().unwrap_or(0).saturating_add(1),
+        column_widths,
+        row_heights,
+        column_offsets: column_offsets.iter().map(|offset| *offset as i32).collect(),
+        row_offsets: row_offsets.iter().map(|offset| *offset as i32).collect(),
     }
 }
 
@@ -1200,6 +1357,16 @@ fn get_vertical_border_count(table: &TextTableMeasure, border_layout: TableBorde
         + (border_layout.right as u32)
         + if border_layout.inner_vertical {
             table.column_count.saturating_sub(1) as u32
+        } else {
+            0
+        }
+}
+
+fn get_horizontal_border_count(table: &TextTableMeasure, border_layout: TableBorderLayout) -> u32 {
+    (border_layout.top as u32)
+        + (border_layout.bottom as u32)
+        + if border_layout.inner_horizontal {
+            table.row_count.saturating_sub(1) as u32
         } else {
             0
         }
@@ -1790,6 +1957,73 @@ pub extern "C" fn sceneNodeSetTextTableMeasure(
         .lock()
         .unwrap()
         .set_text_table_measure(id, config, cell_views)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeSetTextTableDraw(
+    id: u64,
+    border_chars_ptr: *const u32,
+    show_borders: bool,
+    border_color_ptr: *const f32,
+    border_background_color_ptr: *const f32,
+    background_color_ptr: *const f32,
+) -> bool {
+    if border_chars_ptr.is_null()
+        || border_color_ptr.is_null()
+        || border_background_color_ptr.is_null()
+        || background_color_ptr.is_null()
+    {
+        return false;
+    }
+
+    let border_chars = unsafe { std::slice::from_raw_parts(border_chars_ptr, 11) };
+    let border_color = unsafe { std::slice::from_raw_parts(border_color_ptr, 4) };
+    let border_background_color = unsafe { std::slice::from_raw_parts(border_background_color_ptr, 4) };
+    let background_color = unsafe { std::slice::from_raw_parts(background_color_ptr, 4) };
+
+    scene_graph().lock().unwrap().set_text_table_draw(
+        id,
+        border_chars,
+        show_borders,
+        [
+            border_color[0],
+            border_color[1],
+            border_color[2],
+            border_color[3],
+        ],
+        [
+            border_background_color[0],
+            border_background_color[1],
+            border_background_color[2],
+            border_background_color[3],
+        ],
+        [
+            background_color[0],
+            background_color[1],
+            background_color[2],
+            background_color[3],
+        ],
+    )
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn sceneNodeDrawTextTable(
+    id: u64,
+    buffer: *mut OptimizedBuffer,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> bool {
+    if buffer.is_null() {
+        return false;
+    }
+
+    let buffer = unsafe { &mut *buffer };
+    scene_graph()
+        .lock()
+        .unwrap()
+        .draw_text_table(id, buffer, x, y, width, height)
 }
 
 #[unsafe(no_mangle)]

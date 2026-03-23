@@ -5,12 +5,16 @@ import { BoxRenderable } from "../renderables/Box.js"
 import { CodeRenderable } from "../renderables/Code.js"
 import { LineNumberRenderable } from "../renderables/LineNumberRenderable.js"
 import { TextRenderable } from "../renderables/Text.js"
+import { TextTableRenderable } from "../renderables/TextTable.js"
 import { TextareaRenderable } from "../renderables/Textarea.js"
 import { RGBA } from "../lib/RGBA.js"
 import { SyntaxStyle } from "../syntax-style.js"
 import { createTestRenderer } from "../testing/test-renderer.js"
 
-function expectNativeLayoutParity(renderer: { sceneNodeGetLayout: (handle: bigint | number) => any }, renderable: BoxRenderable) {
+function expectNativeLayoutParity(
+  renderer: { sceneNodeGetLayout: (handle: bigint | number) => any },
+  renderable: BoxRenderable,
+) {
   const handle = (renderable as any).sceneNodeHandle
   expect(handle).toBeTruthy()
 
@@ -81,7 +85,6 @@ test("Renderable uses native z-index child order for traversal", async () => {
   parent.add(back)
   parent.add(front)
   await renderOnce()
-
   ;(parent as any).ensureZIndexSorted()
   expect((parent as any)._getVisibleChildren()).toEqual([front.num, back.num])
 
@@ -321,12 +324,48 @@ test("scene graph can draw a plain LineNumber gutter directly through the native
 
   const gutter = lineNumbers.getChildren()[0]
   const buffer = OptimizedBuffer.create(8, 4, renderer.widthMethod)
-  expect(renderer.sceneNodeDrawLineNumberView((gutter as any).sceneNodeHandle, buffer.ptr, 0, 0, gutter.width, gutter.height)).toBe(
-    true,
-  )
+  expect(
+    renderer.sceneNodeDrawLineNumberView(
+      (gutter as any).sceneNodeHandle,
+      buffer.ptr,
+      0,
+      0,
+      gutter.width,
+      gutter.height,
+    ),
+  ).toBe(true)
 
   const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
   expect(frame).toContain("1")
+
+  buffer.destroy()
+  renderer.destroy()
+})
+
+test("scene graph can draw a plain TextTable directly through the native path", async () => {
+  const { renderer, renderOnce } = await createTestRenderer({ width: 80, height: 24 })
+
+  const table = new TextTableRenderable(renderer, {
+    width: 18,
+    wrapMode: "word",
+    content: [
+      [[{ __isChunk: true, text: "Key" }], [{ __isChunk: true, text: "Value" }]],
+      [[{ __isChunk: true, text: "A" }], [{ __isChunk: true, text: "word wrap check" }]],
+    ],
+  })
+
+  renderer.root.add(table)
+  await renderOnce()
+
+  const buffer = OptimizedBuffer.create(table.width, table.height, renderer.widthMethod)
+  expect(
+    renderer.sceneNodeDrawTextTable((table as any).sceneNodeHandle, buffer.ptr, 0, 0, table.width, table.height),
+  ).toBe(true)
+
+  const frame = new TextDecoder().decode(buffer.getRealCharBytes(true))
+  expect(frame).toContain("Key")
+  expect(frame).toContain("word")
+  expect(frame).toContain("┌")
 
   buffer.destroy()
   renderer.destroy()

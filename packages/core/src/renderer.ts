@@ -889,18 +889,7 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     id: number,
   ) {
     if (id !== this.capturedRenderable?.num) {
-      this.lib.addToHitGridWithinRect(
-        this.rendererPtr,
-        x,
-        y,
-        width,
-        height,
-        clipX,
-        clipY,
-        clipWidth,
-        clipHeight,
-        id,
-      )
+      this.lib.addToHitGridWithinRect(this.rendererPtr, x, y, width, height, clipX, clipY, clipWidth, clipHeight, id)
     }
   }
 
@@ -1118,6 +1107,35 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeSetTextTableMeasure(handle, config, cellViewPtrs as any)
   }
 
+  public sceneNodeSetTextTableDraw(
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    showBorders: boolean,
+    borderColor: RGBA,
+    borderBackgroundColor: RGBA,
+    backgroundColor: RGBA,
+  ): boolean {
+    return this.lib.sceneNodeSetTextTableDraw(
+      handle,
+      borderChars,
+      showBorders,
+      borderColor,
+      borderBackgroundColor,
+      backgroundColor,
+    )
+  }
+
+  public sceneNodeDrawTextTable(
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): boolean {
+    return this.lib.sceneNodeDrawTextTable(handle, buffer, x, y, width, height)
+  }
+
   public sceneNodeSetLineNumberMeasure(
     handle: bigint | number,
     viewPtr: unknown,
@@ -1195,7 +1213,9 @@ export class CliRenderer extends EventEmitter implements RenderContext {
     return this.lib.sceneNodeCalculateLayout(root, width, height)
   }
 
-  public sceneNodeGetLayout(handle: bigint | number): { left: number; top: number; width: number; height: number } | null {
+  public sceneNodeGetLayout(
+    handle: bigint | number,
+  ): { left: number; top: number; width: number; height: number } | null {
     return this.lib.sceneNodeGetLayout(handle)
   }
 

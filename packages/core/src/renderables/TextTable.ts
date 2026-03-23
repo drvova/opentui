@@ -400,6 +400,52 @@ export class TextTableRenderable extends Renderable {
     this._rasterDirty = false
   }
 
+  protected override tryExecuteNativeSceneDraw(
+    buffer: OptimizedBuffer,
+    command: { x: number; y: number; width: number; height: number },
+  ): boolean {
+    if (
+      this.sceneNodeHandle == null ||
+      !this.buffered ||
+      !this.frameBuffer ||
+      this.renderBefore ||
+      this.renderAfter ||
+      this.renderSelf !== TextTableRenderable.prototype.renderSelf
+    ) {
+      return false
+    }
+
+    if (!this._layoutDirty && !this._rasterDirty) {
+      buffer.drawFrameBuffer(command.x, command.y, this.frameBuffer)
+      this.markClean()
+      return true
+    }
+
+    if (this._layoutDirty) {
+      this.rebuildLayoutForCurrentWidth()
+    }
+
+    this.frameBuffer.clear(this._backgroundColor)
+    if (this._rowCount > 0 && this._columnCount > 0) {
+      const drawn = this._ctx.sceneNodeDrawTextTable(
+        this.sceneNodeHandle,
+        this.frameBuffer.ptr,
+        0,
+        0,
+        command.width,
+        command.height,
+      )
+      if (!drawn) {
+        return false
+      }
+    }
+
+    this._rasterDirty = false
+    this.markClean()
+    buffer.drawFrameBuffer(command.x, command.y, this.frameBuffer)
+    return true
+  }
+
   protected destroySelf(): void {
     this.destroyCells()
     super.destroySelf()
@@ -459,9 +505,23 @@ export class TextTableRenderable extends Renderable {
     )
   }
 
+  private syncNativeDrawRegistration(): void {
+    if (this.sceneNodeHandle == null) return
+
+    this._ctx.sceneNodeSetTextTableDraw(
+      this.sceneNodeHandle,
+      BorderCharArrays[this._borderStyle],
+      this._showBorders,
+      this._borderColor,
+      this._borderBackgroundColor,
+      this._backgroundColor,
+    )
+  }
+
   public override requestRender(): void {
     if (this.isDestroyed) return
     this.syncNativeMeasureRegistration()
+    this.syncNativeDrawRegistration()
     super.requestRender()
   }
 

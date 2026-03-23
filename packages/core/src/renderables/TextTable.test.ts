@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { OptimizedBuffer } from "../buffer"
 import { RGBA } from "../lib/RGBA"
 import { bold, green, red, yellow } from "../lib/styled-text"
 import { createTestRenderer, type MockMouse, type TestRenderer } from "../testing/test-renderer"
@@ -222,6 +221,39 @@ describe("TextTableRenderable", () => {
 
     expect(okSpan).toBeDefined()
     expect(okSpan?.fg.equals(RGBA.fromHex("#008000"))).toBe(true)
+  })
+
+  test("uses native scene draw for the default buffered render path", async () => {
+    const originalDraw = renderer.sceneNodeDrawTextTable.bind(renderer)
+    let nativeCalls = 0
+
+    ;(renderer as any).sceneNodeDrawTextTable = (...args: Parameters<typeof originalDraw>) => {
+      nativeCalls += 1
+      return originalDraw(...args)
+    }
+
+    try {
+      const table = new TextTableRenderable(renderer, {
+        left: 0,
+        top: 0,
+        width: 24,
+        wrapMode: "word",
+        content: [
+          [cell("A"), cell("B")],
+          [cell("1"), cell("two three four")],
+        ],
+      })
+
+      renderer.root.add(table)
+      await renderOnce()
+      expect(nativeCalls).toBe(1)
+      expect(captureFrame()).toContain("two")
+
+      await renderOnce()
+      expect(nativeCalls).toBe(1)
+    } finally {
+      ;(renderer as any).sceneNodeDrawTextTable = originalDraw
+    }
   })
 
   test("wraps content and fits columns when width is constrained", async () => {
@@ -486,12 +518,12 @@ describe("TextTableRenderable", () => {
   })
 
   test("uses native border draw for inner-only mode", async () => {
-    const originalDrawGrid = OptimizedBuffer.prototype.drawGrid
+    const originalDraw = renderer.sceneNodeDrawTextTable.bind(renderer)
     let nativeCalls = 0
 
-    OptimizedBuffer.prototype.drawGrid = function (...args: Parameters<OptimizedBuffer["drawGrid"]>) {
+    ;(renderer as any).sceneNodeDrawTextTable = (...args: Parameters<typeof originalDraw>) => {
       nativeCalls += 1
-      return originalDrawGrid.apply(this, args)
+      return originalDraw(...args)
     }
 
     try {
@@ -525,17 +557,17 @@ describe("TextTableRenderable", () => {
       const borderXs = findVerticalBorderXs(renderer.currentRenderBuffer, rowY)
       expect(borderXs).toEqual([1])
     } finally {
-      OptimizedBuffer.prototype.drawGrid = originalDrawGrid
+      ;(renderer as any).sceneNodeDrawTextTable = originalDraw
     }
   })
 
   test("defaults outerBorder to false when border is false", async () => {
-    const originalDrawGrid = OptimizedBuffer.prototype.drawGrid
+    const originalDraw = renderer.sceneNodeDrawTextTable.bind(renderer)
     let nativeCalls = 0
 
-    OptimizedBuffer.prototype.drawGrid = function (...args: Parameters<OptimizedBuffer["drawGrid"]>) {
+    ;(renderer as any).sceneNodeDrawTextTable = (...args: Parameters<typeof originalDraw>) => {
       nativeCalls += 1
-      return originalDrawGrid.apply(this, args)
+      return originalDraw(...args)
     }
 
     try {
@@ -557,19 +589,19 @@ describe("TextTableRenderable", () => {
       expect(table.outerBorder).toBe(false)
       expect(BORDER_CHAR_PATTERN.test(frame)).toBe(false)
       expect(frame).toContain("AB")
-      expect(nativeCalls).toBe(0)
+      expect(nativeCalls).toBe(1)
     } finally {
-      OptimizedBuffer.prototype.drawGrid = originalDrawGrid
+      ;(renderer as any).sceneNodeDrawTextTable = originalDraw
     }
   })
 
   test("allows outer border even when inner border is off", async () => {
-    const originalDrawGrid = OptimizedBuffer.prototype.drawGrid
+    const originalDraw = renderer.sceneNodeDrawTextTable.bind(renderer)
     let nativeCalls = 0
 
-    OptimizedBuffer.prototype.drawGrid = function (...args: Parameters<OptimizedBuffer["drawGrid"]>) {
+    ;(renderer as any).sceneNodeDrawTextTable = (...args: Parameters<typeof originalDraw>) => {
       nativeCalls += 1
-      return originalDrawGrid.apply(this, args)
+      return originalDraw(...args)
     }
 
     try {
@@ -595,7 +627,7 @@ describe("TextTableRenderable", () => {
       expect(frame).not.toContain("┼")
       expect(nativeCalls).toBe(1)
     } finally {
-      OptimizedBuffer.prototype.drawGrid = originalDrawGrid
+      ;(renderer as any).sceneNodeDrawTextTable = originalDraw
     }
   })
 

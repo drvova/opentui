@@ -101,7 +101,8 @@ registerEnvVar({
 })
 registerEnvVar({
   name: "OPENTUI_NATIVE_INPUT",
-  description: "Read terminal key, mouse, paste, and focus events through the native runtime after capability bootstrap",
+  description:
+    "Read terminal key, mouse, paste, and focus events through the native runtime after capability bootstrap",
   type: "boolean",
   default: true,
 })
@@ -215,6 +216,14 @@ function getOpenTUILib(libPath?: string) {
     },
     sceneNodeSetTextTableMeasure: {
       args: ["u64", "ptr", "ptr", "usize"],
+      returns: "bool",
+    },
+    sceneNodeSetTextTableDraw: {
+      args: ["u64", "ptr", "bool", "ptr", "ptr", "ptr"],
+      returns: "bool",
+    },
+    sceneNodeDrawTextTable: {
+      args: ["u64", "ptr", "i32", "i32", "u32", "u32"],
       returns: "bool",
     },
     sceneNodeSetLineNumberMeasure: {
@@ -913,6 +922,22 @@ export interface RenderLib {
     handle: bigint | number,
     config: Record<string, unknown>,
     cellViewPtrs: readonly Pointer[],
+  ) => boolean
+  sceneNodeSetTextTableDraw: (
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    showBorders: boolean,
+    borderColor: RGBA,
+    borderBackgroundColor: RGBA,
+    backgroundColor: RGBA,
+  ) => boolean
+  sceneNodeDrawTextTable: (
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
   ) => boolean
   sceneNodeSetLineNumberMeasure: (
     handle: bigint | number,
@@ -2059,7 +2084,41 @@ class FFIRenderLib implements RenderLib {
     for (let i = 0; i < cellViewPtrs.length; i++) {
       ptrArray[i] = BigInt(cellViewPtrs[i] as unknown as bigint | number)
     }
-    return this.opentui.symbols.sceneNodeSetTextTableMeasure(handle, ptr(configBuffer), ptr(ptrArray), cellViewPtrs.length)
+    return this.opentui.symbols.sceneNodeSetTextTableMeasure(
+      handle,
+      ptr(configBuffer),
+      ptr(ptrArray),
+      cellViewPtrs.length,
+    )
+  }
+
+  public sceneNodeSetTextTableDraw(
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    showBorders: boolean,
+    borderColor: RGBA,
+    borderBackgroundColor: RGBA,
+    backgroundColor: RGBA,
+  ): boolean {
+    return this.opentui.symbols.sceneNodeSetTextTableDraw(
+      handle,
+      ptr(borderChars),
+      showBorders,
+      borderColor.buffer,
+      borderBackgroundColor.buffer,
+      backgroundColor.buffer,
+    )
+  }
+
+  public sceneNodeDrawTextTable(
+    handle: bigint | number,
+    buffer: Pointer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): boolean {
+    return this.opentui.symbols.sceneNodeDrawTextTable(handle, buffer, x, y, width, height)
   }
 
   public sceneNodeSetLineNumberMeasure(
@@ -2148,7 +2207,9 @@ class FFIRenderLib implements RenderLib {
     return this.opentui.symbols.sceneNodeCalculateLayout(root, width, height)
   }
 
-  public sceneNodeGetLayout(handle: bigint | number): { left: number; top: number; width: number; height: number } | null {
+  public sceneNodeGetLayout(
+    handle: bigint | number,
+  ): { left: number; top: number; width: number; height: number } | null {
     const layoutBuffer = new ArrayBuffer(SceneLayoutStruct.size)
     const ok = this.opentui.symbols.sceneNodeGetLayout(handle, ptr(layoutBuffer))
     if (!ok) return null
@@ -2342,18 +2403,7 @@ class FFIRenderLib implements RenderLib {
     clipHeight: number,
     id: number,
   ) {
-    this.opentui.symbols.addToHitGridWithinRect(
-      renderer,
-      x,
-      y,
-      width,
-      height,
-      clipX,
-      clipY,
-      clipWidth,
-      clipHeight,
-      id,
-    )
+    this.opentui.symbols.addToHitGridWithinRect(renderer, x, y, width, height, clipX, clipY, clipWidth, clipHeight, id)
   }
 
   public checkHit(renderer: Pointer, x: number, y: number): number {

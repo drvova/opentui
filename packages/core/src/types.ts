@@ -73,15 +73,27 @@ export interface RenderContext extends EventEmitter {
   sceneNodeRemoveChild: (parent: bigint | number, child: bigint | number) => boolean
   sceneNodeSetVisibleChildren: (handle: bigint | number, children: readonly (bigint | number)[]) => boolean
   sceneNodeSetStyle: (handle: bigint | number, style: Record<string, unknown>) => boolean
-  sceneNodeSetTextBufferViewMeasure: (
-    handle: bigint | number,
-    viewPtr: unknown,
-    clampAtMost: boolean,
-  ) => boolean
+  sceneNodeSetTextBufferViewMeasure: (handle: bigint | number, viewPtr: unknown, clampAtMost: boolean) => boolean
   sceneNodeSetTextTableMeasure: (
     handle: bigint | number,
     config: Record<string, unknown>,
     cellViewPtrs: readonly unknown[],
+  ) => boolean
+  sceneNodeSetTextTableDraw: (
+    handle: bigint | number,
+    borderChars: Uint32Array,
+    showBorders: boolean,
+    borderColor: RGBA,
+    borderBackgroundColor: RGBA,
+    backgroundColor: RGBA,
+  ) => boolean
+  sceneNodeDrawTextTable: (
+    handle: bigint | number,
+    buffer: unknown,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
   ) => boolean
   sceneNodeSetLineNumberMeasure: (
     handle: bigint | number,
